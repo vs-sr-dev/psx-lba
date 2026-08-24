@@ -12,16 +12,20 @@ developed against.
 
 ## Status
 
-Session 1 of the project. There is no playable build yet, but the 1994 engine
-runs on a PlayStation: it boots off a CD image built from your own copy of the
-game, reads its configuration, brings up all four driver layers, initialises
-SVGA at 640x480 interlaced and starts the pad — and then runs out of memory,
-which is exactly the question the port was built to answer.
+Session 2 of the project. There is no playable build yet, but **a Little Big
+Adventure scene is on screen at 640x480**, built out of the brick grid by the
+1994 software path and put on the framebuffer by the GPU — off a CD image made
+from your own copy of the game.
 
-It needs about 2258 KB and the machine has 1579 KB of heap. The three moves the
-architecture already required — the GPU drawing the actors, and voices and
-samples living in the SPU — free 751 KB, and it fits with 72 KB to spare. See
-[`docs/M2-NOTES.md`](docs/M2-NOTES.md).
+It fits in 2 MB. The engine reaches its first scene with 1535 KB allocated
+against 1574 KB of heap, once three things move: `Log` and `Screen` become one
+640x480 buffer (the GPU draws the actors, so there is no second image to
+restore from), `BufSpeak` drops from 256 KB to 64 KB (voices are going to the
+SPU), and the MCGA page is allocated on demand. That is 554 KB, and 39 KB
+spare. See [`docs/M3-NOTES.md`](docs/M3-NOTES.md).
+
+A scene load costs 3.9 s and composing the background costs 583 ms. Both are
+measured, both are worse than predicted, and neither is a frame rate.
 
 What exists:
 
@@ -31,10 +35,14 @@ What exists:
   measured.
 - [`docs/M1-NOTES.md`](docs/M1-NOTES.md) — what it took to get the engine
   compiling, linking and booting on MIPS.
-- [`docs/M2-NOTES.md`](docs/M2-NOTES.md) — the CD, and the RAM verdict.
+- [`docs/M2-NOTES.md`](docs/M2-NOTES.md) — the CD, and the first RAM verdict.
+- [`docs/M3-NOTES.md`](docs/M3-NOTES.md) — the scene on screen, the corrected
+  RAM verdict, and why the emulator had been hiding the one bug class this port
+  was most afraid of.
 - [`engine/`](engine/) and [`translate/`](translate/) — the 1994 engine and the
   C translations of its assembly modules, inherited from the DS port.
-- [`platform/psx/`](platform/psx/) — the PlayStation HAL.
+- [`platform/psx/`](platform/psx/) — the PlayStation HAL, including the
+  exception handler that names a faulting address.
 - [`tools/`](tools/) — an HQR reader and the polygon census that answered the
   first architectural question.
 - [`m0-hello/`](m0-hello/) — 640x480 interlaced, the CLUT blit path, the VRAM
@@ -43,8 +51,7 @@ What exists:
   PlayStation and the Nintendo DS, running identical work so the two machines
   can be compared instead of guessed at.
 
-Next is M3: the isometric background, built from the brick grid and put on
-screen — the first thing this port will draw that came off the disc.
+Next is M4: the actors, through the GTE and the GPU.
 
 ## The short version of the plan
 
@@ -86,6 +93,31 @@ TTY, which is where every diagnostic in this project goes:
 ```sh
 pcsx-redux -run -stdout -loadexe m0-hello/build/m0hello.exe
 ```
+
+**Always pass `-interpreter`.** PCSX-Redux's recompiler does not raise MIPS
+address errors: an unaligned load returns the correctly assembled value instead
+of faulting. Since unaligned access off a byte stream is the single most likely
+bug in a 1994 DOS engine moved to MIPS, running under the recompiler means not
+testing for it at all. See [`docs/M3-NOTES.md`](docs/M3-NOTES.md) §5.
+
+The full game builds from `platform/psx`:
+
+```sh
+docker run --rm -v ${PWD}:/work -w /work/platform/psx psx-lba-psn00b sh -c     'cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release         -DCMAKE_TOOLCHAIN_FILE=$PSN00BSDK_LIBS/cmake/sdk.cmake &&      cmake --build build'
+
+python tools/make_cd.py "/path/to/Little Big Adventure/Speedrun/Windows"
+docker run --rm -v ${PWD}:/work -w /work psx-lba-psn00b     mkpsxiso -y -o build/lba1psx.bin -c build/lba1psx.cue build/iso.xml
+
+pcsx-redux -run -stdout -interpreter -iso build/lba1psx.cue
+```
+
+`make_cd.py` copies the freshly built PS-EXE onto the staged disc, so it has to
+run *after* the build and *before* `mkpsxiso`. Two build knobs matter:
+
+| | |
+|---|---|
+| `-DPSX_M3=ON` (default) | stop at one static scene instead of the main menu |
+| `-DPSX_EXC_SELFTEST=ON` | fault on purpose, to prove the crash handler is armed |
 
 The DS half of the calibration benchmark needs devkitARM instead:
 

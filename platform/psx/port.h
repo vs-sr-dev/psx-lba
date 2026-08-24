@@ -28,6 +28,16 @@ typedef signed char BYTE;
 void PORT_Diag(const char *fmt, ...);
 void PORT_Panic(const char *fmt, ...);
 
+/* ---- exceptions (psx_exc.c / psx_exc.S) -------------------------------- *
+ * Takes over the general exception vector so an Address Error names a pc and
+ * a faulting address. Install this before anything else runs.
+ */
+void PORT_ExcInstall(void);
+void PORT_ExcVectorDump(const char *when);
+#ifdef PSX_EXC_SELFTEST
+void PORT_ExcSelfTest(void);
+#endif
+
 /* ---- video (psx_video.c) ----------------------------------------------- */
 extern UBYTE PORT_PalRGB[768];  /* current 8-bit palette, DAC-quantised     */
 void PORT_PresentAll(void);     /* full Log -> VRAM                         */
@@ -58,6 +68,7 @@ extern UWORD CmptFrame;
 extern UWORD Cmpt_18;
 
 void PORT_ScanInput(void);
+unsigned long PORT_Micros(void);
 
 /* ---- heap (psx_sys.c) --------------------------------------------------- *
  * The instrumented heap from the DS port, which mattered on 4 MB and matters
@@ -66,6 +77,7 @@ void PORT_ScanInput(void);
 void  PORT_HeapInit(void);
 void  PORT_HeapReport(const char *where);
 void  PORT_HeapDump(unsigned long min_bytes);
+unsigned long PORT_HeapLargestFree(void);
 void *PSX_malloc(unsigned int size);
 void *PSX_calloc(unsigned int n, unsigned int size);
 void *PSX_realloc(void *p, unsigned int size);

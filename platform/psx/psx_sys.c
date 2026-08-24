@@ -115,9 +115,20 @@ void PORT_HeapInit(void)
               size / 1024UL, base, (unsigned long)_end, STACK_RESERVE / 1024);
 }
 
+/*
+ * The canary sits past the end of the block, and blocks are whatever size the
+ * engine asked for -- 361472, but also 3097 and 25500. On the DS an odd offset
+ * here was a rotated word nobody noticed. On MIPS it is a Store Address Error,
+ * and this was the first one the port found: the instrument faulting on its
+ * own instrumentation.
+ *
+ * Round up to a word. PSX_malloc reserves the padding to match.
+ */
+#define CANARY_OFF(sz)  (((sz) + 3UL) & ~3UL)
+
 static unsigned long *canary_of(HeapHdr *h)
 {
-    return (unsigned long *)((char *)(h + 1) + h->size);
+    return (unsigned long *)((char *)(h + 1) + CANARY_OFF(h->size));
 }
 
 int PORT_HeapCheck(const char *tag)
@@ -177,9 +188,44 @@ void PORT_HeapDump(unsigned long min_bytes)
               counted, shown / 1024UL, heap_used / 1024UL);
 }
 
+/*
+ * The largest block that can still be allocated — the answer to Malloc(-1),
+ * which the community source release answers with "not supported" so that
+ * every pool in PERSO.C collapses to its clamped floor.
+ *
+ * There is no free-list walk to be had: libpsn00b's allocator does not expose
+ * one. So the question is asked the only way it can be answered exactly, by
+ * bisecting on what the allocator will actually grant. Twenty-odd malloc/free
+ * pairs, once, at startup — and the number that comes back accounts for the
+ * fragmentation a running total never would.
+ */
+unsigned long PORT_HeapLargestFree(void)
+{
+    unsigned long lo = 0;
+    unsigned long hi = RAM_TOP - STACK_RESERVE - (unsigned long)_end;
+
+    while (lo < hi) {
+        unsigned long mid = lo + (hi - lo + 1) / 2;
+        void *p = malloc((size_t)mid);
+
+        if (p) {
+            free(p);
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+
+        if (hi - lo < 1024)     /* KB resolution is all anyone reads */
+            break;
+    }
+
+    return lo;
+}
+
 void *PSX_malloc(unsigned int size)
 {
-    HeapHdr *h = (HeapHdr *)malloc(sizeof(HeapHdr) + size + sizeof(unsigned long));
+    HeapHdr *h = (HeapHdr *)malloc(sizeof(HeapHdr) + CANARY_OFF(size)
+                                  + sizeof(unsigned long));
 
     if (!h) {
         PORT_Diag("[MEM] malloc(%u) FAILED, use=%luK\n", size, heap_used / 1024UL);
@@ -355,6 +401,36 @@ void SetTimer(WORD divisor)
 WORD GetTimer(void)
 {
     return (WORD)TimerSystem;
+}
+
+/*
+ * Microseconds, for the measurements the port is being built on.
+ *
+ * Timer 1 already counts hblanks and is reset to zero on every 50 Hz tick, so
+ * the two together are one clock: TimerSystem gives the whole ticks and the
+ * counter gives the 63.6 us hblanks inside the current one. Timers 0 and 2
+ * belong to psxgpu and psxspu, and the CPU has no cycle counter, so this is
+ * the whole of what the machine offers.
+ *
+ * Resolution is one hblank. That is coarse against a 20 ms frame and perfectly
+ * adequate against AffGrille, which is expected to take fifteen of them.
+ */
+unsigned long PORT_Micros(void)
+{
+    unsigned long ticks, raw, hz, per_tick;
+
+    hz = (GetVideoMode() == MODE_PAL) ? 15625UL : 15734UL;
+    per_tick = (GetVideoMode() == MODE_PAL) ? 313UL : 315UL;
+
+    /* The tick can land between the two reads, and then the counter belongs
+     * to the new tick while `ticks` belongs to the old one. Re-read. */
+    do {
+        ticks = TimerSystem;
+        raw = TIMER_VALUE(1) & 0xffffUL;
+    } while (ticks != TimerSystem);
+
+    return (unsigned long)((((unsigned long long)ticks * per_tick + raw)
+                            * 1000000ULL) / hz);
 }
 
 void InitSystem(void) {}

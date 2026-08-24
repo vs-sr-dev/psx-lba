@@ -68,4 +68,12 @@ void  PSX_free(void *p);
  * is undefined. One prototype here covers every engine TU. */
 void PORT_Diag(const char *fmt, ...);
 
+/* The real answer to Malloc(-1); see psx_sys.c and LIB_SYS/MALLOC.C. */
+unsigned long PORT_HeapLargestFree(void);
+
+#ifdef PORT_PSX_M3
+/* The M3 milestone harness, called from PERSO.C in place of MainGameMenu. */
+void PORT_M3_StaticScene(void);
+#endif
+
 #endif /* WATCOM_COMPAT_H */

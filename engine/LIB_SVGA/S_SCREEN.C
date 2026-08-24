@@ -9,5 +9,11 @@ void Cls(void)
 
 void CopyScreen(void *src, void *dst)
 {
+	/* PORT: on the PlayStation Log and Screen are the same allocation, so
+	 * every background save/restore in the engine arrives here with src ==
+	 * dst. memcpy is not defined for that, and it is not wanted either. */
+	if (src == dst)
+		return;
+
 	memcpy(dst, src, Screen_X * Screen_Y);
 }

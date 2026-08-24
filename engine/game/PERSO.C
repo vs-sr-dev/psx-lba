@@ -1519,7 +1519,20 @@ void lba_main(int argc, UBYTE *argv[]) /* PORT: was main(); SDL wrapper in platf
 
 	// presentation
 
+#ifdef PORT_PSX
+	/* PORT: the second 640x480 image does not exist on this machine. Log is
+	 * the composed background and the GPU draws the actors over it, so there
+	 * is nothing for a clean copy to restore. 300 KB of 1575 KB, and it is
+	 * the allocation that decides whether the game fits at all -- see
+	 * psx_video.c:InitGraphSvga and docs/M3-NOTES.md.
+	 *
+	 * Note the ordering this relies on: InitAdelineSystem() above has already
+	 * run InitGraphSvga(), so Log is allocated, with the same +500 margin the
+	 * line below asked for. */
+	Screen = Log;
+#else
 	Screen = Malloc(640 * 480 + 500); // + decomp marge
+#endif
 	if (!Screen)
 		TheEnd(NOT_ENOUGH_MEM, "Screen");
 
@@ -1562,7 +1575,21 @@ void lba_main(int argc, UBYTE *argv[]) /* PORT: was main(); SDL wrapper in platf
 
 	// divers malloc
 
+	/* PORT: 256 KB of conventional memory, sized for the largest voice
+	 * sample in VOX. On the PlayStation the voices are ADPCM and will live
+	 * in the SPU's own 512 KB (M7), so this buffer never has to hold one.
+	 * What it still has to hold is everything else that borrows it as
+	 * scratch: FIRE.C's two 320x50 planes (32000), GAMEMENU's plasma, and
+	 * MESSAGE.C's 256x256 CD staging. 64 KB covers all three and gives the
+	 * heap back 192 KB it does not have to spare.
+	 *
+	 * This is a promise as much as a saving: when voices arrive they go to
+	 * the SPU, not here. */
+#ifdef PORT_PSX
+	BufSpeak = DosMalloc(64 * 1024 + 34, NULL);
+#else
 	BufSpeak = DosMalloc(256 * 1024 + 34, NULL);
+#endif
 	if (!BufSpeak)
 		TheEnd(NOT_ENOUGH_MEM, "BufSpeak (Dos Memory)");
 
@@ -1745,12 +1772,21 @@ void lba_main(int argc, UBYTE *argv[]) /* PORT: was main(); SDL wrapper in platf
 
 	//	FadeToBlack( PalettePcx ) ;
 
+#ifdef PORT_PSX_M3
+	/* PORT: M3 stops here. The menu needs the whole game loop behind it and
+	 * the milestone in front of it is narrower than that: one static scene
+	 * off the disc, composed and presented. platform/psx/psx_m3.c walks the
+	 * scene-load chain on its own so the alignment faults it turns up are
+	 * attributable to one thing at a time. */
+	PORT_M3_StaticScene();
+#else
 	Load_HQR(PATH_RESSOURCE "ress.hqr", Screen, RESS_MENU_PCR);
 	CopyScreen(Screen, Log);
 	Flip();
 	FadeToPal(PtrPal);
 
 	MainGameMenu();
+#endif
 
 	TheEnd(PROGRAM_OK, "");
 }

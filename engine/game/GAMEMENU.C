@@ -1203,8 +1203,17 @@ void CopyBlockPhysMCGA(LONG x0, LONG y0, LONG x1, LONG y1)
 	if (y < 0)
 		y = 0;
 
-#if defined(PORT_SDL) || defined(PORT_NDS)
-	CopyBlockMCGA(x, y, x + 319, y + 199, Log, 0, 0, Phys); /* PORT: 0xA0000 is live VGA memory on DOS; the shims present Phys */
+#if defined(PORT_SDL) || defined(PORT_NDS) || defined(PORT_PSX)
+	/* PORT: 0xA0000 is live VGA memory on DOS; the shims present Phys.
+	 * PORT_PSX was missing from this list, and on a PlayStation 0xA0000
+	 * is not an aperture -- it is a perfectly valid main-RAM address 640
+	 * KB up, in the middle of the heap. The DOS branch would have written
+	 * 64000 bytes over whatever lived there and crashed somewhere else.
+	 * Phys is allocated on entry to MCGA mode and is NULL until then;
+	 * when it is NULL nothing is displaying it, so there is nothing to
+	 * copy. */
+	if (Phys)
+		CopyBlockMCGA(x, y, x + 319, y + 199, Log, 0, 0, Phys);
 #else
 	CopyBlockMCGA(x, y, x + 319, y + 199, Log, 0, 0, 0xA0000);
 #endif

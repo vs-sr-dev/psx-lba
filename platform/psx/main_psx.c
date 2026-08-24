@@ -42,6 +42,7 @@ int main(void)
     ResetGraph(0);
 
     banner();
+    PORT_ExcInstall();
     PORT_HeapInit();
     PORT_CdInit();
 

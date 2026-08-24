@@ -120,11 +120,15 @@ static void UploadClut(void)
     DrawSync(0);
 }
 
+/*
+ * Phys is the 320x200 MCGA page, and SVGA mode never touches it: the FLA
+ * player and the zoomed camera are the only things that do. 62 KB is not a
+ * rounding error on a heap with 40 KB of slack, so it is allocated when MCGA
+ * mode is entered and not before.
+ */
 static void InitSvga(void)
 {
     EnsureVideo();
-    if (!Phys)
-        Phys = PSX_calloc(1, 64000);
     mode_x = SCR_W;
     mode_y = SCR_H;
     Screen_X = SCR_W;
@@ -159,12 +163,37 @@ void SimpleInitSvga(void)
     BuildTabOffLine();
 }
 
+/*
+ * One 640x480 buffer, not two.
+ *
+ * The DOS engine keeps `Log` (the software render target) and `Screen` (the
+ * clean composed background) as separate images and restores dirty rectangles
+ * from the second into the first before each frame. That is 600 KB of a
+ * 1575 KB heap, and the second copy exists only because the CPU draws the
+ * actors into the first.
+ *
+ * On this machine the CPU does not draw the actors; the GPU does, over a
+ * background it textures out of main RAM. So `Log` never accumulates anything
+ * that has to be erased, and the restore it exists to serve has nothing left
+ * to restore. PERSO.C therefore points `Screen` at this same allocation, and
+ * the port keeps ONE background image.
+ *
+ * Every CopyScreen(Log, Screen) and CopyBlock(..., Screen, ..., Log) in the
+ * engine then becomes a copy onto itself: not a coincidence, but the right
+ * answer with the work taken out of it. The background is already where it
+ * belongs.
+ *
+ * The +500 is the decompression margin the engine relies on: Load_HQR expands
+ * in place and overruns by up to 500 bytes. PERSO.C asked for that slack on
+ * Screen, so Log has to carry it now instead.
+ */
 void InitGraphSvga(void)
 {
     InitSvga();
-    Log = Malloc(640L * 480L);
+    Log = Malloc(640L * 480L + 500L);
     MemoLog = Log;
-    PORT_Diag("[VID] SVGA 640x480i, Log=%p (300 KB)\n", (void *)Log);
+    PORT_Diag("[VID] SVGA 640x480i, Log=%p (300 KB, shared with Screen)\n",
+              (void *)Log);
 }
 
 void ClearGraphSvga(void)
