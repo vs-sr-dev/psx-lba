@@ -1,0 +1,30 @@
+# build output
+build/
+*.elf
+*.exe
+*.nds
+*.map
+*.o
+*.obj
+*.d
+*.bin
+*.iso
+*.cue
+
+# staged game data: none of it ships here (bring your own assets)
+data/
+assets/
+*.HQR
+*.hqr
+*.VOX
+*.vox
+
+# editor / OS
+.vscode/
+.idea/
+*~
+Thumbs.db
+desktop.ini
+.sentry-native/
+__pycache__/
+*.pyc

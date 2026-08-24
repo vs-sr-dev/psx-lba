@@ -1,0 +1,49 @@
+# PSn00bSDK toolchain for psx-lba.
+#
+# Everything in here is open source and GPL-compatible, which matters: the LBA1
+# engine source is GPL v2, so the proprietary Psy-Q SDK is not an option.
+#
+#   PSn00bSDK   MPL-2.0     SDK + libpsn00b
+#   GCC         GPL-3.0     mipsel-none-elf cross compiler
+#   mkpsxiso    MIT         CD image + cue authoring
+#
+# The Linux release archive already bundles the cross compiler, ninja, mkpsxiso
+# and dumpsxiso, so it is the only download needed.
+#
+# Build:  docker build -t psx-lba-psn00b -f tools/docker/Dockerfile.psn00b .
+# Use:    docker run --rm -v ${PWD}:/work -w /work/m0-hello psx-lba-psn00b \
+#             sh -c 'cmake -S . -B build -GNinja \
+#                 -DCMAKE_TOOLCHAIN_FILE=$PSN00BSDK_LIBS/cmake/sdk.cmake && \
+#                 cmake --build build'
+
+FROM debian:bookworm-slim
+
+ARG SDK_VERSION=0.24
+ARG SDK_URL=https://github.com/Lameguy64/PSn00bSDK/releases/download/v${SDK_VERSION}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake make git \
+        curl ca-certificates unzip xz-utils \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /tmp/dl \
+    && curl -fsSL -o /tmp/dl/sdk.zip \
+        "${SDK_URL}/PSn00bSDK-${SDK_VERSION}-Linux.zip" \
+    && unzip -q /tmp/dl/sdk.zip -d /tmp/dl \
+    && mv "/tmp/dl/PSn00bSDK-${SDK_VERSION}-Linux" /opt/psn00bsdk \
+    && rm -rf /tmp/dl \
+    && chmod -R a+rx /opt/psn00bsdk/bin
+
+ENV PATH="/opt/psn00bsdk/bin:${PATH}" \
+    PSN00BSDK_TC="/opt/psn00bsdk" \
+    PSN00BSDK_LIBS="/opt/psn00bsdk/lib/libpsn00b"
+
+# Fail the image build loudly rather than shipping something that cannot
+# compile.
+RUN mipsel-none-elf-gcc --version >/dev/null \
+    && test -f "${PSN00BSDK_LIBS}/cmake/sdk.cmake" \
+    && test -x /opt/psn00bsdk/bin/mkpsxiso
+
+WORKDIR /work
