@@ -15,6 +15,14 @@
 
 #include "translate.h"
 
+#ifdef PORT_PSX
+/* PORT: the GPU takes over the scan conversion at the bottom of AffObjetIso.
+ * platform/psx/psx_poly.c. */
+void PORT_ActorPoly(LONG type, LONG coul, LONG nbp, const WORD *tri);
+void PORT_ActorLine(LONG x0, LONG y0, LONG x1, LONG y1, LONG coul);
+void PORT_ActorSphere(LONG x, LONG y, LONG r, LONG type, LONG coul);
+#endif
+
 /* P_DEFINE.ASH */
 #define NORMAL_UNIT     64
 #define INFO_TRI        1

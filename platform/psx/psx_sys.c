@@ -367,9 +367,26 @@ UWORD WaitNbTicks = 0;
 UWORD CmptFrame = 0;
 UWORD Cmpt_18 = 0;
 
+/*
+ * Both clocks, not one.
+ *
+ * The engine has two, and on DOS the same interrupt drove both: TimerSystem
+ * is the free-running one (AMBIANCE.C times CD tracks against it) and
+ * TimerRef is the GAME clock, the one SaveTimer/RestoreTimer in P_ANIM.C
+ * freeze by snapshotting and rolling back so a pause does not advance the
+ * world.
+ *
+ * Only TimerSystem was being incremented, which meant TimerRef sat at zero
+ * forever -- and TimerPause() spins on TimerRef with only `if (Key OR Fire OR
+ * Joy) return;` for company. So the port hung on the first bumper screen and
+ * could only be got past by pressing a pad button, which is exactly what it
+ * had been doing since M1. MainLoop's frame regulator waits on TimerRef too,
+ * so this was going to stop the game dead the moment the loop ran.
+ */
 static void tick_isr(void)
 {
     TimerSystem++;
+    TimerRef++;
     PORT_ScanInput();
 }
 
@@ -488,8 +505,12 @@ void PORT_ScanInput(void)
     Joy = joy;
     Fire = fire;
 
-    if (btn & PAD_START)
-        Key = 1;                            /* Esc */
+    /* Esc, and it has to go back to zero on release. The engine reads Key as
+     * "the scancode down right now", and a latched value makes every
+     * TimerPause() after the first one return instantly -- which is why one
+     * press appeared to unstick the whole boot sequence rather than just the
+     * screen it was on. */
+    Key = (UWORD)((btn & PAD_START) ? 1 : 0);
 }
 
 void InitKeyboard(void)

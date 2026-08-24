@@ -1043,8 +1043,13 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 			UWORD coul = (UWORD)(((UWORD)rec[0] << 8)
 			                   | ((UWORD)rec[0] >> 8));
 
+#ifdef PORT_PSX
+			PORT_ActorLine((WORD)rec[2], (WORD)rec[3],
+			               (WORD)rec[4], (WORD)rec[5], (LONG)coul);
+#else
 			Line_A((WORD)rec[2], (WORD)rec[3],
 			       (WORD)rec[4], (WORD)rec[5], (LONG)coul);
+#endif
 			break;
 		}
 
@@ -1055,6 +1060,14 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 			UWORD type = (UBYTE)w0;
 			UWORD nbp = (UWORD)(w0 >> 8);
 
+#ifdef PORT_PSX
+			/* PORT: the GPU rasterises. Everything above this point --
+			 * transform, entity build, back-to-front sort -- is unchanged;
+			 * only the scan conversion moves, and it moves to hardware that
+			 * is already committed to the same painter's algorithm. See
+			 * platform/psx/psx_poly.c. */
+			PORT_ActorPoly((LONG)type, (LONG)coul, (LONG)nbp, rec + 2);
+#else
 			TypePoly = (WORD)type;
 			NbPolyPoints = (WORD)nbp;
 
@@ -1064,6 +1077,7 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 			{
 				FillVertic_A((LONG)type, (LONG)coul);
 			}
+#endif
 			break;
 		}
 
@@ -1113,10 +1127,14 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 				ScreenYmin = w;
 			}
 
+#ifdef PORT_PSX
+			PORT_ActorSphere(x, y, r, (LONG)type, (LONG)coul);
+#else
 			if (ComputeSphere_A(x, y, r))
 			{
 				FillVertic_A((LONG)type, (LONG)coul);
 			}
+#endif
 			break;
 		}
 

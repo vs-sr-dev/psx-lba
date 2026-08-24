@@ -2,17 +2,19 @@
 
 The full study is in [docs/FEASIBILITY.md](docs/FEASIBILITY.md); the milestone
 notes are [M0](docs/M0-NOTES.md), [M1](docs/M1-NOTES.md), [M2](docs/M2-NOTES.md),
-[M3](docs/M3-NOTES.md). This file is only "where to pick it up".
+[M3](docs/M3-NOTES.md), [M4](docs/M4-NOTES.md). This file is only "where to
+pick it up".
 
 ---
 
 ## Verdict in three lines
 
-**A Little Big Adventure scene is on screen at 640x480, off a CD image made
-from a real DOS install.** The engine reaches its first scene with 1535 KB
-allocated against 1574 KB of heap — a fit with 39 KB spare, arrived at by three
-moves worth 554 KB. Scene load costs 3.9 s and composing the background costs
-588 ms, both measured, both worse than predicted.
+**A Little Big Adventure scene is on screen at 640x480 with Twinsen standing in
+it** — background composed by the 1994 software path, actor rasterised by the
+GPU — off a CD image made from a real DOS install. The engine reaches its first
+scene with 1535 KB allocated against 1574 KB of heap, and the GPU actor path
+costs zero further bytes, which is what merging `Log` with `Screen` was betting
+on. Scene load 3.9 s, background compose 588 ms. There is no frame loop yet.
 
 ## Corrections from this session
 
@@ -37,6 +39,16 @@ moves worth 554 KB. Scene load costs 3.9 s and composing the background costs
    answer is ~2.8x the DS. **Never scale a blit estimate off `memset` again.**
 4. **PCSX-Redux's recompiler does not check MIPS alignment.** This is the big
    one — see below.
+5. **The engine's sort IS the ordering table.** M4 was expected to need work
+   reconciling `SergeSort`'s key with a PlayStation OT index. There was none:
+   DOS had no depth buffer and neither does this machine, so both were already
+   committed to a painter's algorithm and primitives submitted in the engine's
+   own order land correctly. Replacing the rasteriser cost three `#ifdef`s.
+6. **`TimerRef` was never being incremented**, and `Key` latched on the first
+   START press. Together those are why the port had needed a pad press to get
+   past the first bumper screen since M1. Both fixed; it boots unattended now.
+   `MainLoop`'s frame regulator waits on `TimerRef`, so this would have stopped
+   the game loop dead the first time it ran.
 
 ## Measured numbers (do not re-measure)
 
@@ -50,6 +62,9 @@ moves worth 554 KB. Scene load costs 3.9 s and composing the background costs
 | `Flip` (300 KB to VRAM via the staging page) | **122 ms** |
 | HQM used by cube 0 | 141936 of 400000 |
 | cube 0 camera start cell | 53, 4, 54 |
+| cube 0 objects | 23, of which 11 have bodies and **1 is on screen** |
+| Twinsen, as GPU primitives | 105 polygons, 19 lines, 5 spheres |
+| main RAM cost of the actor path | **zero** |
 
 The two heaps differ by 80 KB because the M3 harness replaces `MainGameMenu`
 and the linker garbage-collects most of `GAMEMENU.C` with it. **Always check a
@@ -141,61 +156,50 @@ Build knobs, all in `platform/psx/CMakeLists.txt`:
 | | |
 |---|---|
 | `-DPSX_M3=ON` (default) | stop at one static scene instead of the main menu |
+| `-DPSX_M4=ON` (default) | draw the scene's actors on the GPU after it |
 | `-DPSX_EXC_SELFTEST=ON` | fault on purpose, to test the crash handler |
 | `-DPSX_EXC_TRACE=ON` | one BIOS `putchar` at the top of the fatal path, then stop |
 
 ---
 
-# M4 — the actors
+# M5 — a frame loop
 
-`AffGrille` proved the background half of the table in the README. M4 is the
-other half: 3D actor transforms on the GTE, rasterisation as GPU flat and
-gouraud primitives, over a background the GPU textures out of main RAM.
+Everything so far runs once and stops. M5 is the first build that keeps
+running: the engine's `MainLoop`, at 50 Hz, with the dirty-rectangle discipline
+it already has driving what reaches VRAM.
 
-This is the move the whole architecture was built around, and M3 has already
-committed to it: `Log` and `Screen` share one buffer *because* the CPU is not
-going to draw actors. There is no software fallback left to retreat to.
-
-### What M0 already settled
-
-- 19826 polygons in `BODY.HQR` across 132 bodies. **98.03% are flat or gouraud**
-  and map to GPU primitives directly.
-- The awkward set is 353 polygons, 1.78%. Tele is 4-colour noise a 32x32 texture
-  reproduces; Marbre is a gradient along the span (gouraud in index space, 8
-  polygons in the entire game). **Copper and Bopper — 48 polygons total — still
-  need a decision:** approximate with gouraud, or keep a software path.
-- The R3000A is 1.82x the ARM9 on the same rasteriser, so a software actor costs
-  ~15 ms of a 20 ms frame. That is the number the GPU path exists to avoid.
+That discipline is the difference between plausible and playable. Right now a
+present is `PORT_PresentAll` — 300 KB through the staging page, 122 ms. The
+engine has known since 1994 exactly which boxes changed (`FLIPBOX.C`:
+`AddPhysBox`, `OptListBox`, `FlipBoxes`, `ClsBoxes`) and `psx_video.c` already
+takes a rectangle. They have simply never been connected.
 
 ### The order to do it in
 
-1. **Palette and colour.** The engine works in 8bpp index space and the GPU
-   works in 15bpp RGB. Flat and gouraud actor colours are palette indices into
-   the *scene* palette, so the GPU has to be handed RGB resolved through
-   `PORT_PalRGB` at draw time — and a palette fade then has to reach the actors
-   too, not just the CLUT. Get this wrong and everything renders in the wrong
-   colours in a way that looks like a rasteriser bug.
-2. **One body, no animation.** `AffObjetIso` on a single 3D object over the M3
-   scene. `GAMEMENU.C:3069`-ish already does exactly this for the menu's
-   spinning object, which makes it a ready-made test harness.
-3. **The GTE.** The engine has its own fixed-point transform in `LIB_3D`
-   (`P_FUNC.C`, `P_SINTAB.C`). Decide deliberately whether to route it through
-   the GTE or leave it on the CPU and only hand the GPU the projected vertices
-   — the second is much less work and M0 never measured that the transform was
-   the bottleneck.
-4. **Depth.** The engine sorts actors itself (`BUBSORT.C`, `T_SORT`) because
-   DOS had no z-buffer. The PlayStation has an ordering table and also no
-   z-buffer, so the two disciplines line up — but the engine's sort key and the
-   OT index have to be reconciled, and that is real design work, not plumbing.
-5. **Then animation**, and only then the frame budget.
+1. **Turn on `MainLoop`** (`-DPSX_M3=OFF` builds the menu; a middle setting that
+   runs the loop on a fixed cube without the menu is probably worth having).
+   `TimerRef` now ticks, so the frame regulator will work — that was M4's
+   accidental prerequisite.
+2. **Wire `FlipBoxes` to `PORT_PresentRect`.** `CopyBlockPhys` already is
+   `PresentRect`; the question is whether the box list is tight enough to be
+   worth it, which is measurable the moment the loop runs.
+3. **Watch the interaction with the actors.** The background is `Log`; the
+   actors are GPU primitives over it and exist nowhere else. So a box the
+   engine re-presents *erases* the actors in it, which is correct — but it
+   means present order matters: background boxes first, then every actor,
+   every frame. `ClsBoxes` restoring from `Screen` into `Log` is a self-copy
+   now (M3) and does nothing, which is also correct and worth re-checking with
+   something moving.
+4. **Then animation.** `SetInterAnimObjet2` is being called with a frame that
+   never advances.
 
-### Measure before believing
+### Watch out for
 
-GPU fill rate is **still unmeasured**, and PCSX-Redux cannot measure it (M0:
-it reported a 640x480 clear in 54 us). Install DuckStation before claiming any
-actor budget as a number.
-
----
+- `InitGraphMcga` reallocates `Log` and would break the `Screen` alias.
+- Anything that draws into `Log` expecting a later restore will silently do
+  nothing. That is by design (M3) but it is a trap for 2D UI work.
+- The GPU actor path holds no state between frames, so nothing needs freeing —
+  but it also means every frame re-clips and re-emits all 129 primitives.
 
 ## Carried forward
 
@@ -212,7 +216,12 @@ actor budget as a number.
   OpenBIOS answers a real address error from its own handler and halts without
   ever reaching ours. Settle it on DuckStation, a retail BIOS image, or
   hardware. Until then OpenBIOS's dump carries the same information.
-- **Copper and Bopper** (48 polygons in the entire game) still need a decision.
+- **Copper and Bopper are decided: flat.** 48 polygons out of 19826 justify
+  neither a software path nor a per-scanline GPU trick. Tele (~300 polygons) is
+  flat for now and wants a 32x32 noise texture. See docs/M4-NOTES.md §3.
+- **Twinsen wears the wrong costume** — body 0, the scene-file default, instead
+  of the prisoner shirt. `InitBody`/`SearchBody` are present and running, so
+  why it lands there is not yet known. Game state, not rendering.
 - **The FLA movies are not on the disc.** Not in the DOS install either — only
   `Common/Fla`, which belongs to the 2023 remaster. Establish whether those
   files are format-identical before relying on them. M8.

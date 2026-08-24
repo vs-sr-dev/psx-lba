@@ -34,9 +34,15 @@ option(PSX_M3 "build the M3 static-scene harness instead of the game menu" ON)
 # badvaddr, and anything else means the vector is not really ours.
 option(PSX_EXC_SELFTEST "fault on purpose at boot to test psx_exc.c" OFF)
 
+# M4 draws the scene's actors on the GPU at the end of the M3 harness.
+option(PSX_M4 "draw the actors through the GPU after the M3 scene" ON)
+
 set(PORT_DEFS -DPORT_PSX)
 if(PSX_M3)
     list(APPEND PORT_DEFS -DPORT_PSX_M3)
+endif()
+if(PSX_M4)
+    list(APPEND PORT_DEFS -DPORT_PSX_M4)
 endif()
 if(PSX_EXC_SELFTEST)
     list(APPEND PORT_DEFS -DPSX_EXC_SELFTEST)

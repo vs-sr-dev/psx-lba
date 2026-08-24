@@ -13,19 +13,21 @@ developed against.
 ## Status
 
 Session 2 of the project. There is no playable build yet, but **a Little Big
-Adventure scene is on screen at 640x480**, built out of the brick grid by the
-1994 software path and put on the framebuffer by the GPU — off a CD image made
-from your own copy of the game.
+Adventure scene is on screen at 640x480 with Twinsen standing in it** — the
+background built out of the brick grid by the 1994 software path, the actor
+rasterised by the GPU — off a CD image made from your own copy of the game.
 
 It fits in 2 MB. The engine reaches its first scene with 1535 KB allocated
 against 1574 KB of heap, once three things move: `Log` and `Screen` become one
 640x480 buffer (the GPU draws the actors, so there is no second image to
 restore from), `BufSpeak` drops from 256 KB to 64 KB (voices are going to the
 SPU), and the MCGA page is allocated on demand. That is 554 KB, and 39 KB
-spare. See [`docs/M3-NOTES.md`](docs/M3-NOTES.md).
+spare. The GPU actor path then costs **zero** further bytes of main RAM, which
+is what the first of those three moves was betting on.
 
-A scene load costs 3.9 s and composing the background costs 583 ms. Both are
-measured, both are worse than predicted, and neither is a frame rate.
+A scene load costs 3.9 s and composing the background costs 588 ms. Both are
+measured, both are worse than predicted, and neither is a frame rate — there is
+no frame loop yet.
 
 What exists:
 
@@ -39,10 +41,13 @@ What exists:
 - [`docs/M3-NOTES.md`](docs/M3-NOTES.md) — the scene on screen, the corrected
   RAM verdict, and why the emulator had been hiding the one bug class this port
   was most afraid of.
+- [`docs/M4-NOTES.md`](docs/M4-NOTES.md) — the actors on the GPU, and why
+  replacing a rasteriser turned out to be the smallest change in the project.
 - [`engine/`](engine/) and [`translate/`](translate/) — the 1994 engine and the
   C translations of its assembly modules, inherited from the DS port.
-- [`platform/psx/`](platform/psx/) — the PlayStation HAL, including the
-  exception handler that names a faulting address.
+- [`platform/psx/`](platform/psx/) — the PlayStation HAL: the CD, the video
+  path, the instrumented heap, the exception handler, and the GPU actor
+  renderer.
 - [`tools/`](tools/) — an HQR reader and the polygon census that answered the
   first architectural question.
 - [`m0-hello/`](m0-hello/) — 640x480 interlaced, the CLUT blit path, the VRAM
@@ -51,7 +56,7 @@ What exists:
   PlayStation and the Nintendo DS, running identical work so the two machines
   can be compared instead of guessed at.
 
-Next is M4: the actors, through the GTE and the GPU.
+Next is M5: a frame loop, driven by the engine's own dirty rectangles.
 
 ## The short version of the plan
 
@@ -117,6 +122,7 @@ run *after* the build and *before* `mkpsxiso`. Two build knobs matter:
 | | |
 |---|---|
 | `-DPSX_M3=ON` (default) | stop at one static scene instead of the main menu |
+| `-DPSX_M4=ON` (default) | draw the scene's actors on the GPU after it |
 | `-DPSX_EXC_SELFTEST=ON` | fault on purpose, to prove the crash handler is armed |
 
 The DS half of the calibration benchmark needs devkitARM instead:

@@ -37,6 +37,9 @@ void Cls(void);
 void Flip(void);
 void Palette(void *pal);
 void Vsync(void);
+#ifdef PORT_PSX_M4
+void PORT_M4_Actor(void);
+#endif
 
 extern UBYTE *PtrPal;
 extern WORD NumCube, NewCube;
@@ -112,6 +115,11 @@ void PORT_M3_StaticScene(void)
 
     report("on screen");
     PORT_Diag("[M3] done. The scene is up; nothing is animating it.\n");
+
+#ifdef PORT_PSX_M4
+    /* M4 draws the actors over it, through the GPU. psx_m4.c. */
+    PORT_M4_Actor();
+#endif
 
 #ifdef PSX_EXC_SELFTEST
     /* And now, on purpose. The scene above went through every byte-stream
