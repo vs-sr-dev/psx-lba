@@ -148,12 +148,42 @@ void PORT_HeapReport(const char *where)
     PORT_HeapCheck(where);
 }
 
+/*
+ * Every live block above a threshold, newest first. On a 2 MB machine the
+ * question is never "how much is used" — the running total answers that — but
+ * "by what", and the answer has to be available at the moment an allocation
+ * fails rather than reconstructed afterwards.
+ */
+void PORT_HeapDump(unsigned long min_bytes)
+{
+    HeapHdr *h = heap_head;
+    unsigned long shown = 0, counted = 0;
+
+    PORT_Diag("[MEM] live blocks >= %luK, newest first:\n", min_bytes / 1024UL);
+    while (h) {
+        if (h->magic != HEAP_MAGIC) {
+            PORT_Diag("[MEM]   list corrupt at %p\n", (void *)h);
+            break;
+        }
+        if (h->size >= min_bytes) {
+            PORT_Diag("[MEM]   %8lu  %6luK  %p\n",
+                      h->size, h->size / 1024UL, (void *)(h + 1));
+            shown += h->size;
+            counted++;
+        }
+        h = h->next;
+    }
+    PORT_Diag("[MEM]   %lu blocks listed, %luK of %luK total\n",
+              counted, shown / 1024UL, heap_used / 1024UL);
+}
+
 void *PSX_malloc(unsigned int size)
 {
     HeapHdr *h = (HeapHdr *)malloc(sizeof(HeapHdr) + size + sizeof(unsigned long));
 
     if (!h) {
         PORT_Diag("[MEM] malloc(%u) FAILED, use=%luK\n", size, heap_used / 1024UL);
+        PORT_HeapDump(32 * 1024);
         return 0;
     }
 

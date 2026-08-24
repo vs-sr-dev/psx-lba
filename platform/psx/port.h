@@ -65,10 +65,14 @@ void PORT_ScanInput(void);
  */
 void  PORT_HeapInit(void);
 void  PORT_HeapReport(const char *where);
+void  PORT_HeapDump(unsigned long min_bytes);
 void *PSX_malloc(unsigned int size);
 void *PSX_calloc(unsigned int n, unsigned int size);
 void *PSX_realloc(void *p, unsigned int size);
 void  PSX_free(void *p);
+
+/* ---- CD (psx_cd.c) ------------------------------------------------------ */
+void PORT_CdInit(void);
 
 /* ---- entry point ------------------------------------------------------- */
 int lba_main(int argc, char *argv[]);

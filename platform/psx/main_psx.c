@@ -43,6 +43,7 @@ int main(void)
 
     banner();
     PORT_HeapInit();
+    PORT_CdInit();
 
     PORT_Diag("[BOOT] entering lba_main\n");
     lba_main(0, 0);

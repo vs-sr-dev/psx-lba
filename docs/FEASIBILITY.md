@@ -323,4 +323,8 @@ project's list too.
 | **M7** | Audio: VAG in the SPU, XA music, voices from CD | Does the drive contention resolve? |
 | **M8** | FLA movies, holomap, Memory Card saves | Is it complete? |
 
-M0 is done; see [M0-NOTES.md](M0-NOTES.md).
+M0, M1 and M2 are done; see [M0-NOTES.md](M0-NOTES.md),
+[M1-NOTES.md](M1-NOTES.md) and [M2-NOTES.md](M2-NOTES.md). The RAM verdict this
+document estimated has now been measured, and it lands where the estimate said
+it would: the engine needs about 2258 KB, the heap is 1579 KB, and the three
+moves this architecture already requires free 751 KB.

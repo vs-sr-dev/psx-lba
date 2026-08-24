@@ -24,6 +24,8 @@
 
 #include "port.h"
 
+void InitTimer(void);   /* psx_sys.c */
+
 /* An empty identifier list: the engine's "while (**ptridentifier)" loops stop
  * immediately on it. */
 static char *EmptyIdentList[] = { "" };
@@ -111,15 +113,22 @@ void AskMidiVars(char ***listidentifier, long **ptrvars)
     *ptrvars = (long *)DummyVars;
 }
 
+/*
+ * These two report success even though there is no MIDI device. ADELINE.C
+ * calls exit(1) when a driver named in LBA.CFG fails to load, and a config
+ * copied from a DOS install always names one. The DS port made the same
+ * choice, for the same reason: failing here would mean the port could only
+ * boot from a config file it had written itself.
+ */
 long InitMidiDLL(char *driverpathname)
 {
     (void)driverpathname;
-    return 0;
+    return 1;
 }
 
 long InitMidi(void)
 {
-    return 0;
+    return 1;
 }
 
 void InitPathMidiSampleFile(unsigned char *path)
@@ -137,7 +146,10 @@ void WaitFadeMidi(void) {}
 void VolumeMidi(short vol) { (void)vol; }
 void SetLoopMidi(short flag) { (void)flag; }
 void DoLoopMidi(void) {}
-void InitMidiTimer(void) {}
+void InitMidiTimer(void)
+{
+    InitTimer();        /* the engine's tick, whoever asks for it */
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
  * WAVE samples (LIB_SAMP)
@@ -151,7 +163,7 @@ LONG Wave_Driver_Enable = 0;
 LONG WaveInitDLL(char *dlldriver)
 {
     (void)dlldriver;
-    return 0;
+    return 1;           /* as with MIDI above: a failure here is exit(1) */
 }
 
 void WaveAskVars(char ***listidentifier, LONG **ptrvars)
@@ -162,7 +174,7 @@ void WaveAskVars(char ***listidentifier, LONG **ptrvars)
 
 ULONG InitWave(void)
 {
-    return 0;
+    return 1;
 }
 
 void ClearWave(void) {}

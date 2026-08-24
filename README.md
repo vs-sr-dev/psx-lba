@@ -13,9 +13,15 @@ developed against.
 ## Status
 
 Session 1 of the project. There is no playable build yet, but the 1994 engine
-boots on a PlayStation: it runs its own initialisation, prints Adeline's
-copyright banner, and stops at the configuration file it cannot find yet. See
-[`docs/M1-NOTES.md`](docs/M1-NOTES.md).
+runs on a PlayStation: it boots off a CD image built from your own copy of the
+game, reads its configuration, brings up all four driver layers, initialises
+SVGA at 640x480 interlaced and starts the pad — and then runs out of memory,
+which is exactly the question the port was built to answer.
+
+It needs about 2258 KB and the machine has 1579 KB of heap. The three moves the
+architecture already required — the GPU drawing the actors, and voices and
+samples living in the SPU — free 751 KB, and it fits with 72 KB to spare. See
+[`docs/M2-NOTES.md`](docs/M2-NOTES.md).
 
 What exists:
 
@@ -25,6 +31,7 @@ What exists:
   measured.
 - [`docs/M1-NOTES.md`](docs/M1-NOTES.md) — what it took to get the engine
   compiling, linking and booting on MIPS.
+- [`docs/M2-NOTES.md`](docs/M2-NOTES.md) — the CD, and the RAM verdict.
 - [`engine/`](engine/) and [`translate/`](translate/) — the 1994 engine and the
   C translations of its assembly modules, inherited from the DS port.
 - [`platform/psx/`](platform/psx/) — the PlayStation HAL.
@@ -36,10 +43,8 @@ What exists:
   PlayStation and the Nintendo DS, running identical work so the two machines
   can be compared instead of guessed at.
 
-Data loading is next: there is no CD image yet, so the engine gets as far as
-asking for `LBA.CFG` and no further. That is M2, and it is also where the
-alignment bugs start — every one the DS port found lives in code that walks a
-byte stream, and none of it runs without data.
+Next is M3: the isometric background, built from the brick grid and put on
+screen — the first thing this port will draw that came off the disc.
 
 ## The short version of the plan
 

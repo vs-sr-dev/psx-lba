@@ -308,7 +308,7 @@ static void PresentTile(const UBYTE *src, int stride,
     DrawSync(0);
 
     setDrawTPage(&tp, 0, 1, getTPage(1, 0, STAGE_X, STAGE_Y));  /* 1 = 8bpp */
-    DrawPrim(&tp);
+    DrawPrim((const uint32_t *)&tp);
 
     setPolyFT4(&q);
     setRGB0(&q, 128, 128, 128);         /* 128 passes the texture through */
@@ -316,7 +316,7 @@ static void PresentTile(const UBYTE *src, int stride,
     setUV4(&q, 0, 0, w - 1, 0, 0, h - 1, w - 1, h - 1);
     q.clut = getClut(CLUT_X, CLUT_Y);
     q.tpage = getTPage(1, 0, STAGE_X, STAGE_Y);
-    DrawPrim(&q);
+    DrawPrim((const uint32_t *)&q);
     DrawSync(0);
 }
 
