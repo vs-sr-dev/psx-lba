@@ -12,12 +12,22 @@ developed against.
 
 ## Status
 
-Session 1 of the project. There is no playable build yet. What exists:
+Session 1 of the project. There is no playable build yet, but the 1994 engine
+boots on a PlayStation: it runs its own initialisation, prints Adeline's
+copyright banner, and stops at the configuration file it cannot find yet. See
+[`docs/M1-NOTES.md`](docs/M1-NOTES.md).
+
+What exists:
 
 - [`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) — the architecture study, with
   the RAM and VRAM arithmetic that decides how the port has to be built.
 - [`docs/M0-NOTES.md`](docs/M0-NOTES.md) — the M0 experiments and what they
   measured.
+- [`docs/M1-NOTES.md`](docs/M1-NOTES.md) — what it took to get the engine
+  compiling, linking and booting on MIPS.
+- [`engine/`](engine/) and [`translate/`](translate/) — the 1994 engine and the
+  C translations of its assembly modules, inherited from the DS port.
+- [`platform/psx/`](platform/psx/) — the PlayStation HAL.
 - [`tools/`](tools/) — an HQR reader and the polygon census that answered the
   first architectural question.
 - [`m0-hello/`](m0-hello/) — 640x480 interlaced, the CLUT blit path, the VRAM
@@ -26,7 +36,10 @@ Session 1 of the project. There is no playable build yet. What exists:
   PlayStation and the Nintendo DS, running identical work so the two machines
   can be compared instead of guessed at.
 
-The engine itself is not ported yet. That is M1.
+Data loading is next: there is no CD image yet, so the engine gets as far as
+asking for `LBA.CFG` and no further. That is M2, and it is also where the
+alignment bugs start — every one the DS port found lives in code that walks a
+byte stream, and none of it runs without data.
 
 ## The short version of the plan
 
