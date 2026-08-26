@@ -37,13 +37,21 @@ option(PSX_EXC_SELFTEST "fault on purpose at boot to test psx_exc.c" OFF)
 # M4 draws the scene's actors on the GPU at the end of the M3 harness.
 option(PSX_M4 "draw the actors through the GPU after the M3 scene" ON)
 
+# M5 hands control to the engine's own MainLoop on a fixed cube, with neither
+# the menu nor the introduction in front of it. It replaces the M3 harness
+# rather than following it, so turning it on turns M3 off.
+#   cmake -DPSX_M5=ON ...
+option(PSX_M5 "run the engine's game loop instead of the M3 static scene" OFF)
+
 # Which scene the harness opens. 0 is Twinsen's house; 59 is the heaviest in
 # the game by brick data (tools/scene_census.py) and is the one to check a
 # memory claim against.
 set(PSX_M3_CUBE 0 CACHE STRING "the cube the M3/M4 harness loads")
 
 set(PORT_DEFS -DPORT_PSX)
-if(PSX_M3)
+if(PSX_M5)
+    list(APPEND PORT_DEFS -DPORT_PSX_M5)
+elseif(PSX_M3)
     list(APPEND PORT_DEFS -DPORT_PSX_M3)
 endif()
 if(PSX_M4)

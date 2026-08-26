@@ -374,6 +374,13 @@ LONG MainLoop()
 		if (NbFramePerSecond > 500)
 			Vsync();
 
+#ifdef PORT_PSX_M5
+		/* PORT: one frame, measured. platform/psx/psx_m5.c -- after the
+		   regulator, so the interval is the frame period the machine really
+		   achieved and not just the work inside it. */
+		PORT_M5_Frame();
+#endif
+
 		/*		CoulText( 15, 0 ) ;
 				Text( 0,0, "%FTimerRef: %l", TimerRef ) ;	*/
 
@@ -1217,7 +1224,13 @@ LONG MainLoop()
 		/*-------------------------------------------------------------------------*/
 		/* affiche tout */
 
+#ifdef PORT_PSX_M5
+		PORT_M5_Mark("game logic done, into AffScene");
+#endif
 		AffScene(FirstTime);
+#ifdef PORT_PSX_M5
+		PORT_M5_Mark("AffScene returned");
+#endif
 
 		FirstTime = FALSE;
 
@@ -1779,6 +1792,10 @@ void lba_main(int argc, UBYTE *argv[]) /* PORT: was main(); SDL wrapper in platf
 	 * scene-load chain on its own so the alignment faults it turns up are
 	 * attributable to one thing at a time. */
 	PORT_M3_StaticScene();
+#elif defined(PORT_PSX_M5)
+	/* PORT: M5 runs the engine's own MainLoop on a fixed cube, with neither
+	 * the menu nor the introduction in front of it. platform/psx/psx_m5.c. */
+	PORT_M5_Game();
 #else
 	Load_HQR(PATH_RESSOURCE "ress.hqr", Screen, RESS_MENU_PCR);
 	CopyScreen(Screen, Log);

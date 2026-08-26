@@ -2590,6 +2590,38 @@ void AffScene(LONG flagflip)
 
 	UnSetClip();
 
+#ifdef PORT_PSX
+	/* PORT: the background reaches VRAM BEFORE the actors, not after.
+	   Everywhere else in the family the actors are drawn into Log and the
+	   whole thing is copied out at the end of the frame; here Log is the
+	   background and the actors are GPU primitives that exist only in VRAM,
+	   so a present after them erases them. The erase step is the same list
+	   the engine has always kept -- last frame's boxes, in OptListBox -- and
+	   FlipBoxes is exactly "present that list". ClsBoxes is a self-copy on
+	   this machine (Log and Screen are one allocation, M3) and does nothing,
+	   which is correct: nothing ever drew into Log to be cleaned up. */
+	if (!flagflip)
+	{
+		FlipBoxes(); /* le fond sous les acteurs de la frame precedente */
+	}
+	else
+	{
+		SaveTimer();
+		Cls();
+		AffGrille();
+		ChangeIncrustPos(oldxporg, oldyporg, XpOrgw, YpOrgw);
+		HQ_ChangeBalanceSamples(oldxporg, oldyporg);
+		CopyScreen(Log, Screen);
+		Flip();
+	}
+
+	/* And the actors' own GPU state, once per frame, after every present:
+	   PresentTile leaves its own texture page behind. */
+	PORT_ActorBegin();
+#ifdef PORT_PSX_M5
+	PORT_M5_Mark("background presented");
+#endif
+#else
 	if (!flagflip)
 	{
 		ClsBoxes(); /* nettoie Log */
@@ -2603,6 +2635,7 @@ void AffScene(LONG flagflip)
 		HQ_ChangeBalanceSamples(oldxporg, oldyporg);
 		CopyScreen(Log, Screen);
 	}
+#endif
 
 	/*------------------------------------------------------------------------*/
 	/* objets scenarique 3D ou sprite */
@@ -3399,6 +3432,18 @@ void AffScene(LONG flagflip)
 	}
 	else
 	{
+#ifdef PORT_PSX
+		/* PORT: the present happened at the top of the frame (above); all
+		   that is left is to roll the box list forward, so next frame erases
+		   what this one drew. */
+#ifdef PORT_PSX_M5
+		PORT_M5_Mark("objects drawn");
+#endif
+		PORT_ActorEnd();
+		FlipOptList();
+		if (flagflip)
+			RestoreTimer();
+#else
 		if (!flagflip)
 		{
 			FlipBoxes(); /* Flip Log vers Phys */
@@ -3409,7 +3454,11 @@ void AffScene(LONG flagflip)
 			FlipOptList();
 			RestoreTimer();
 		}
+#endif
 	}
+#ifdef PORT_PSX_M5
+	PORT_M5_Mark("boxes rolled");
+#endif
 	if (FlagFade)
 	{
 		if (FlagPalettePcx)
@@ -3418,6 +3467,9 @@ void AffScene(LONG flagflip)
 			FadeToPal(PtrPal);
 		FlagFade = FALSE;
 	}
+#ifdef PORT_PSX_M5
+	PORT_M5_Mark("faded, AffScene done");
+#endif
 }
 /*══════════════════════════════════════════════════════════════════════════*
 		▀▀▀█▀ █▀▀▀█ ██▄ █ █▀▀▀▀       █▀▀▀▄ █▀▀▀▀ █▀▀▀▀

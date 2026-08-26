@@ -42,6 +42,9 @@ void PORT_ExcSelfTest(void);
 extern UBYTE PORT_PalRGB[768];  /* current 8-bit palette, DAC-quantised     */
 void PORT_PresentAll(void);     /* full Log -> VRAM                         */
 void PORT_PresentRect(LONG x0, LONG y0, LONG x1, LONG y1);
+/* Rectangles, pixels and microseconds sent to VRAM since the last call, which
+ * this resets. The frame loop's bill; see psx_m5.c. */
+void PORT_PresentStats(int *rects, unsigned long *pixels, unsigned long *us);
 
 extern UBYTE *Log;              /* 640x480 8bpp composition buffer          */
 extern UBYTE *MemoLog;

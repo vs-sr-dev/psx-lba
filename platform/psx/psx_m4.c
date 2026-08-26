@@ -38,6 +38,12 @@ int  PORT_ActorEmitted(void);
  * runs in OBJECT.C, deliberately: a harness that takes a shortcut here would
  * be testing the shortcut.
  */
+/* Where the frame budget goes. M5 needs this split before it needs anything
+ * else: 94 ms for the eleven objects with bodies is 4.7 frames at 50 Hz, and
+ * an aggregate number cannot say whether that is the animation interpolator,
+ * the transform, or an archive lookup that turns out not to be a lookup. */
+unsigned long PORT_M4_THqr, PORT_M4_TAnim, PORT_M4_TIso;
+
 static int DrawSceneObject(int numobj)
 {
     T_OBJET *o = &ListObjet[numobj];
@@ -45,6 +51,7 @@ static int DrawSceneObject(int numobj)
     UBYTE *ptranim;
     LONG err;
     int before;
+    unsigned long t0, t1, t2, t3;
 
     if (o->Body == -1 || !PtrBody[o->Body])
         return 1;                       /* a sprite, or nothing yet */
@@ -52,16 +59,31 @@ static int DrawSceneObject(int numobj)
     before = PORT_ActorEmitted();
 
     ptrbody = PtrBody[o->Body];
+
+    t0 = PORT_Micros();
     ptranim = HQR_Get(HQR_Anims, o->Anim);
+    t1 = PORT_Micros();
 
     if (ptranim)
         SetInterAnimObjet2(o->Frame, ptranim, ptrbody);
+    t2 = PORT_Micros();
 
     err = AffObjetIso(o->PosObjX - WorldXCube,
                       o->PosObjY - WorldYCube,
                       o->PosObjZ - WorldZCube,
                       0, o->Beta, 0,
                       ptrbody);
+    t3 = PORT_Micros();
+
+    PORT_M4_THqr  += t1 - t0;
+    PORT_M4_TAnim += t2 - t1;
+    PORT_M4_TIso  += t3 - t2;
+
+    PORT_Diag("[M4] obj %2d: body %2d anim %3d  HQR_Get %lu us, anim %lu us, "
+              "AffObjetIso %lu us, %d prims%s\n",
+              numobj, (int)o->Body, (int)o->Anim,
+              t1 - t0, t2 - t1, t3 - t2,
+              PORT_ActorEmitted() - before, err ? "  (culled)" : "");
 
     if (err)
         return 1;                       /* AffObjetIso culled it all */
@@ -73,10 +95,10 @@ static int DrawSceneObject(int numobj)
     if (PORT_ActorEmitted() == before)
         return 1;
 
-    PORT_Diag("[M4] obj %2d: body %2d anim %3d beta %4d  box %d,%d..%d,%d  %d prims\n",
-              numobj, (int)o->Body, (int)o->Anim, (int)o->Beta,
-              (int)ScreenXmin, (int)ScreenYmin, (int)ScreenXmax, (int)ScreenYmax,
-              PORT_ActorEmitted() - before);
+    PORT_Diag("[M4]          on screen, beta %4d, box %d,%d..%d,%d\n",
+              (int)o->Beta,
+              (int)ScreenXmin, (int)ScreenYmin,
+              (int)ScreenXmax, (int)ScreenYmax);
     return 0;
 }
 
@@ -114,6 +136,9 @@ void PORT_M4_Actor(void)
               drawn, (int)NbObjets, t1 - t0);
     PORT_Diag("[M4] %d polygons, %d lines, %d spheres, %d dropped by the clip\n",
               polys, lines, spheres, dropped);
+    PORT_Diag("[M4] of which HQR_Get %lu us, SetInterAnimObjet2 %lu us, "
+              "AffObjetIso %lu us\n",
+              PORT_M4_THqr, PORT_M4_TAnim, PORT_M4_TIso);
 
     PORT_HeapReport("after the actors");
 }

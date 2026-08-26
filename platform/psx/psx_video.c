@@ -320,18 +320,33 @@ static void PresentTile(const UBYTE *src, int stride,
     RECT r;
     POLY_FT4 q;
     DR_TPAGE tp;
-    int row;
+    int row, pitch;
 
     /* Two pixels per VRAM halfword, so the staged width has to be even. */
     if (w & 1)
         w++;
 
+    /* And the staged ROW has to be a multiple of 64 pixels.
+     *
+     * A VRAM upload goes out on DMA channel 2 in blocks of 16 words, and a
+     * transfer that is not a whole number of blocks leaves the GPU waiting
+     * for data that never arrives -- DrawSync then never returns. Every
+     * present until M5 was full-screen, which tiles into 256x32 and 128x32
+     * pieces and is always a whole number of blocks by accident; the first
+     * dirty rectangle the frame loop ever presented was 30 pixels wide, and
+     * the machine stopped dead inside it.
+     *
+     * 64 pixels is 32 halfwords is 16 words, so a row padded to a multiple of
+     * 64 makes ANY height a whole number of blocks. The padding is staged but
+     * never sampled -- the quad's UVs still stop at w - 1. */
+    pitch = (w + 63) & ~63;
+
     for (row = 0; row < h; row++)
-        memcpy(stage + row * w, src + row * stride, (size_t)w);
+        memcpy(stage + row * pitch, src + row * stride, (size_t)w);
 
     r.x = STAGE_X;
     r.y = STAGE_Y;
-    r.w = (short)(w / 2);
+    r.w = (short)(pitch / 2);
     r.h = (short)h;
     LoadImage(&r, (const uint32_t *)stage);
     DrawSync(0);
@@ -349,10 +364,29 @@ static void PresentTile(const UBYTE *src, int stride,
     DrawSync(0);
 }
 
+/* What a frame actually sends to VRAM. The engine has tracked its own dirty
+ * boxes since 1994 (FLIPBOX.C) and CopyBlockPhys is PresentRect, so the
+ * discipline is already wired; what nobody had was the bill. M5 counts it. */
+static int present_rects;
+static unsigned long present_pixels;
+static unsigned long present_us;
+
+void PORT_PresentStats(int *rects, unsigned long *pixels, unsigned long *us)
+{
+    if (rects)  *rects  = present_rects;
+    if (pixels) *pixels = present_pixels;
+    if (us)     *us     = present_us;
+
+    present_rects  = 0;
+    present_pixels = 0;
+    present_us     = 0;
+}
+
 static void PresentRect(LONG x0, LONG y0, LONG x1, LONG y1)
 {
     int ox = 0, oy = 0;
     int ty, tx;
+    unsigned long t0;
 
     if (!Log || !video_up)
         return;
@@ -374,6 +408,10 @@ static void PresentRect(LONG x0, LONG y0, LONG x1, LONG y1)
         oy = (SCR_H - 200) / 2;
     }
 
+    t0 = PORT_Micros();
+    present_rects++;
+    present_pixels += (unsigned long)(x1 - x0 + 1) * (unsigned long)(y1 - y0 + 1);
+
     for (ty = (int)y0; ty <= (int)y1; ty += TILE_H) {
         int h = (int)y1 - ty + 1;
 
@@ -390,6 +428,8 @@ static void PresentRect(LONG x0, LONG y0, LONG x1, LONG y1)
                         ox + tx, oy + ty, w, h);
         }
     }
+
+    present_us += PORT_Micros() - t0;
 }
 
 void PORT_PresentRect(LONG x0, LONG y0, LONG x1, LONG y1)
