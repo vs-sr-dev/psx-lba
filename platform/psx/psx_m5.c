@@ -34,8 +34,9 @@ LONG MainLoop(void);
 extern WORD NumCube, NewCube;
 extern WORD DisableAutoSave;
 
-/* AffObjetIso, split four ways (translate/p_ob_iso.c). The frame is 40 ms and
- * 38 of them are in there; this says which part. */
+/* AffObjetIso, split four ways (translate/p_ob_iso.c). It is 18 ms of a 34 ms
+ * frame, for the one object the engine's preclip lets through, and the split
+ * says which part -- the emit, as it turns out, not the transform. */
 extern unsigned long PORT_IsoTXform, PORT_IsoTBuild, PORT_IsoTSort, PORT_IsoTDraw;
 extern unsigned long PORT_IsoObjects, PORT_IsoEntities;
 
