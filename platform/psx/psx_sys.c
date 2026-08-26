@@ -454,15 +454,47 @@ void InitSystem(void) {}
 void ClearSystem(void) {}
 
 /* ══════════════════════════════════════════════════════════════════════════
- * Input
+ * Input — M6
  *
- * The engine speaks DOS: a keyboard scancode, a joystick bitfield and a fire
- * bitfield that doubles as the modifier keys. The DS port mapped those onto a
- * d-pad and six buttons; the same mapping works here, and the PlayStation pad
- * has the buttons the DS was short of.
+ * The engine speaks DOS. Three globals, sampled once per frame by MainLoop
+ * into MyJoy/MyFire/MyKey (PERSO.C:402):
  *
- * M1 keeps the plumbing and leaves the mapping for M6, where it can be tried
- * against a running game instead of guessed at.
+ *   Joy    a four-bit direction field. LBA is tank-controlled: up walks
+ *          forward along the hero's own facing and left/right rotate him,
+ *          so a d-pad is not an approximation of this, it IS this.
+ *   Fire   the DOS modifier keys, as a bitfield, one bit per verb.
+ *   Key    the scancode of the key held RIGHT NOW, and zero when none is.
+ *          Not a queue and not an edge: the engine's menus de-repeat it
+ *          themselves, with the `flag` idiom in GAMEMENU.C — sample once,
+ *          then blank until everything is released. Latch Key and every
+ *          TimerPause() after the first one returns instantly.
+ *
+ * The mapping below reads the pad as three groups. The four face buttons are
+ * the four things Twinsen does; the shoulders are the modifier the DOS player
+ * held down; Start and Select are the two menus.
+ *
+ *   d-pad, left stick   Joy                move, turn
+ *   Cross               F_SPACE            action — talk, search, jump, hit
+ *   Square              F_ALT              throw the magic ball
+ *   Triangle            F_SHIFT            inventory
+ *   Circle              F_RETURN           recentre the camera / validate
+ *   L1                  F_CTRL             behaviour panel, held open
+ *   R1                  K_H                holomap
+ *   Start               K_ESC              pause, save, quit
+ *   Select              K_F4               options
+ *   L2, R2              —                  free
+ *
+ * L1 is a hold, not a press, and that is the engine's design rather than a
+ * shortcut: MenuComportement() spins `while (Fire & F_CTRL)` and reads the
+ * d-pad inside it, so the panel is open exactly as long as the shoulder is
+ * down and the direction chosen when it comes up is the one that sticks.
+ *
+ * Only one scancode can be reported at a time, so the three buttons that map
+ * to one are ranked: Start over Select over R1. Nobody presses two menus.
+ *
+ * This runs in the 50 Hz timer IRQ (tick_isr), not from the frame loop, for
+ * the same reason the tick does: the engine's modal menus spin on Joy and Key
+ * directly and would never see a value the render loop was supposed to fetch.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 volatile UWORD Key = 0;
@@ -474,43 +506,118 @@ volatile LONG Click = 0;
 volatile LONG Mouse_X = 0;
 volatile LONG Mouse_Y = 0;
 
+/* The engine's own names for the bits, from LIB_SYS/LIB_SYS.H. port.h does
+ * not include the engine headers and is not going to start. */
+#define J_UP        1
+#define J_DOWN      2
+#define J_LEFT      4
+#define J_RIGHT     8
+
+#define F_SPACE     1
+#define F_RETURN    2
+#define F_CTRL      4
+#define F_ALT       8
+#define F_SHIFT     32
+
+#define K_ESC       1
+#define K_H         35
+#define K_F4        62
+
+/*
+ * Analog: half of full deflection. The stick is being read as a d-pad because
+ * the game is, and the only thing the threshold decides is how far you have to
+ * push before Twinsen commits to a direction. Too small and the diagonal
+ * between forward and turn is unusable; 64 of 128 is where a DualShock's
+ * corner rests comfortably.
+ */
+#define STICK_DEADZONE  64
+
 static unsigned char pad_buff[2][34];
 static int pad_started;
 
 static UWORD ascii_ring[16];
 static int ascii_r, ascii_w;
 
+/* M6 autopilot (psx_m6.c). Scripted input, so the mapping can be proved
+ * against a running game by reading the log instead of by holding the pad.
+ * Zero, and the whole thing compiles out, when the harness is not built. */
+#ifdef PORT_PSX_M6_AUTOPILOT
+int PORT_M6_Script(UWORD *joy, UWORD *fire, UWORD *key);
+#endif
+
 void PORT_ScanInput(void)
 {
     const PADTYPE *pad = (const PADTYPE *)pad_buff[0];
-    UWORD joy = 0, fire = 0;
+    UWORD joy = 0, fire = 0, key = 0;
     unsigned short btn;
 
-    if (!pad_started || pad->stat)
+#ifdef PORT_PSX_M6_AUTOPILOT
+    if (PORT_M6_Script(&joy, &fire, &key)) {
+        Joy = joy;
+        Fire = fire;
+        Key = key;
         return;
+    }
+#endif
 
-    btn = ~pad->btn;
+    /*
+     * Nothing there, or something that is not a pad. Note that this CLEARS
+     * rather than returns: a controller unplugged mid-stride used to leave
+     * the last direction latched, and Twinsen walked into the wall for ever.
+     */
+    if (!pad_started || pad->stat != 0
+            || (pad->type != PAD_ID_DIGITAL
+                    && pad->type != PAD_ID_ANALOG
+                    && pad->type != PAD_ID_ANALOG_STICK)) {
+        Joy = 0;
+        Fire = 0;
+        Key = 0;
+        return;
+    }
 
-    if (btn & PAD_UP)    joy |= 1;
-    if (btn & PAD_DOWN)  joy |= 2;
-    if (btn & PAD_LEFT)  joy |= 4;
-    if (btn & PAD_RIGHT) joy |= 8;
+    btn = ~pad->btn;                    /* the pad reports 0 for pressed */
 
-    if (btn & PAD_CROSS)    fire |= 1;      /* action (DOS space)         */
-    if (btn & PAD_CIRCLE)   fire |= 2;      /* validate (DOS return)      */
-    if (btn & PAD_L1)       fire |= 4;      /* DOS ctrl: behaviour panel  */
-    if (btn & PAD_R1)       fire |= 8;      /* DOS alt: throw             */
-    if (btn & PAD_TRIANGLE) fire |= 32;     /* DOS shift: inventory       */
+    if (btn & PAD_UP)    joy |= J_UP;
+    if (btn & PAD_DOWN)  joy |= J_DOWN;
+    if (btn & PAD_LEFT)  joy |= J_LEFT;
+    if (btn & PAD_RIGHT) joy |= J_RIGHT;
+
+    /* The left stick, OR-ed into the same four bits. A DualShock in digital
+     * mode reports no sticks at all, and in analog mode reports both these
+     * and the d-pad, so this is additive and never exclusive. */
+    if (pad->type == PAD_ID_ANALOG || pad->type == PAD_ID_ANALOG_STICK) {
+        int lx = (int)pad->ls_x - 128;
+        int ly = (int)pad->ls_y - 128;
+
+        if (ly < -STICK_DEADZONE) joy |= J_UP;
+        if (ly >  STICK_DEADZONE) joy |= J_DOWN;
+        if (lx < -STICK_DEADZONE) joy |= J_LEFT;
+        if (lx >  STICK_DEADZONE) joy |= J_RIGHT;
+    }
+
+    if (btn & PAD_CROSS)    fire |= F_SPACE;
+    if (btn & PAD_SQUARE)   fire |= F_ALT;
+    if (btn & PAD_TRIANGLE) fire |= F_SHIFT;
+    if (btn & PAD_CIRCLE)   fire |= F_RETURN;
+    if (btn & PAD_L1)       fire |= F_CTRL;
+
+    /* Ranked, because Key holds one scancode and the engine compares it for
+     * equality. */
+    if (btn & PAD_START)        key = K_ESC;
+    else if (btn & PAD_SELECT)  key = K_F4;
+    else if (btn & PAD_R1)      key = K_H;
 
     Joy = joy;
     Fire = fire;
+    Key = key;
+}
 
-    /* Esc, and it has to go back to zero on release. The engine reads Key as
-     * "the scancode down right now", and a latched value makes every
-     * TimerPause() after the first one return instantly -- which is why one
-     * press appeared to unstick the whole boot sequence rather than just the
-     * screen it was on. */
-    Key = (UWORD)((btn & PAD_START) ? 1 : 0);
+/* What the pad says right now, for the log. Not for the engine. */
+void PORT_InputState(UWORD *joy, UWORD *fire, UWORD *key)
+{
+    if (joy)  *joy  = Joy;
+    if (fire) *fire = Fire;
+    if (key)  *key  = Key;
 }
 
 void InitKeyboard(void)
