@@ -55,6 +55,46 @@
 /* The engine's clip rectangle (psx_video.c). */
 extern WORD ClipXmin, ClipYmin, ClipXmax, ClipYmax;
 
+/*
+ * A frame's primitives, held back until the end of it.
+ *
+ * There is one framebuffer -- 640x480 in 16 bits is 60% of VRAM and two do
+ * not fit -- so everything drawn is drawn on the screen the viewer is looking
+ * at. Submitting each primitive at the moment the engine computes it meant
+ * the actor was absent for the 38 ms between the background present and the
+ * first polygon, once every frame, which reads as a hard flicker (M5 §6).
+ *
+ * So they go in here instead, in the engine's own back-to-front order, and
+ * PORT_ActorEnd replays the lot immediately after the background has been
+ * presented. The hole shrinks from a frame to a few milliseconds.
+ *
+ * 8 KB is about 290 gouraud triangles. Cube 0's only visible actor emits 129
+ * primitives, so the margin is wide, but a scene that overflows drops the
+ * excess and says so rather than growing a buffer on a machine with 39 KB
+ * spare.
+ */
+#define PRIM_WORDS  2048
+
+static unsigned int prim_buf[PRIM_WORDS];
+static int prim_used;
+static int prim_dropped;
+
+/* One primitive, deferred. The word count lives in the top byte of the tag,
+ * which is where DrawPrim reads it from too. */
+static void Emit(const void *pri)
+{
+    const unsigned int *p = (const unsigned int *)pri;
+    int len = (int)((p[0] >> 24) & 0xff);
+
+    if (prim_used + len + 1 > PRIM_WORDS) {
+        prim_dropped++;
+        return;
+    }
+
+    memcpy(&prim_buf[prim_used], p, (size_t)(len + 1) * 4);
+    prim_used += len + 1;
+}
+
 /* Fill types, after P_OB_ISO's translation (translate/s_fillv.c's table):
  *   0 Triste  1 Tele  2 Copper  3 Bopper  4 Marbre
  *   5 Trans   6 Trame 7 Gouraud 8 Dith                                     */
@@ -200,7 +240,7 @@ static void FlatTri(const Vtx *a, const Vtx *b, const Vtx *c, int idx, int trans
     if (trans)
         setSemiTrans(&p, 1);
 
-    DrawPrim((const uint32_t *)&p);
+    Emit(&p);
 }
 
 static void GouraudTri(const Vtx *a, const Vtx *b, const Vtx *c, int trans)
@@ -216,7 +256,7 @@ static void GouraudTri(const Vtx *a, const Vtx *b, const Vtx *c, int trans)
     if (trans)
         setSemiTrans(&p, 1);
 
-    DrawPrim((const uint32_t *)&p);
+    Emit(&p);
 }
 
 /*
@@ -294,7 +334,7 @@ void PORT_ActorLine(LONG x0, LONG y0, LONG x1, LONG y1, LONG coul)
     setRGB0(&l, r, g, b);
     setXY2(&l, (short)x0, (short)y0, (short)x1, (short)y1);
 
-    DrawPrim((const uint32_t *)&l);
+    Emit(&l);
     stats_lines++;
 }
 
@@ -356,12 +396,35 @@ void PORT_ActorBegin(void)
      * happened to leave behind after the last background blit -- correct
      * today, and a coupling nobody would find funny later. */
     setDrawTPage(&tp, 0, 0, 0);
-    DrawPrim((const uint32_t *)&tp);
+
+    prim_used = 0;
+    prim_dropped = 0;
+    Emit(&tp);
 }
 
+/*
+ * The frame's actors, all at once, on top of a background that has just been
+ * presented. Called from the tail of AffScene -- after FlipBoxes, not before.
+ */
 void PORT_ActorEnd(void)
 {
+    int i = 0;
+
+    while (i < prim_used) {
+        int len = (int)((prim_buf[i] >> 24) & 0xff);
+
+        DrawPrim((const uint32_t *)&prim_buf[i]);
+        i += len + 1;
+    }
+
     DrawSync(0);
+    prim_used = 0;
+}
+
+/* Primitives that did not fit the frame's buffer. Zero everywhere so far. */
+int PORT_ActorDropped(void)
+{
+    return prim_dropped;
 }
 
 void PORT_ActorStats(int *polys, int *dropped, int *lines, int *spheres)

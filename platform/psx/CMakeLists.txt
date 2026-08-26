@@ -43,6 +43,7 @@ option(PSX_M4 "draw the actors through the GPU after the M3 scene" ON)
 #   cmake -DPSX_M5=ON ...
 option(PSX_M5 "run the engine's game loop instead of the M3 static scene" OFF)
 
+
 # Which scene the harness opens. 0 is Twinsen's house; 59 is the heaviest in
 # the game by brick data (tools/scene_census.py) and is the one to check a
 # memory claim against.
@@ -58,6 +59,14 @@ if(PSX_M4)
     list(APPEND PORT_DEFS -DPORT_PSX_M4)
 endif()
 list(APPEND PORT_DEFS -DPSX_M3_CUBE=${PSX_M3_CUBE})
+
+# The bumper screens, their fades and the FLA intro cost about ninety seconds
+# of emulated CD before anything else happens, and none of it is under test.
+# SKIP_INTRO is the engine's own knob (PERSO.C); this only exposes it.
+option(PSX_SKIP_INTRO "skip the bumpers and the FLA intro" OFF)
+if(PSX_SKIP_INTRO)
+    list(APPEND PORT_DEFS -DSKIP_INTRO)
+endif()
 if(PSX_EXC_SELFTEST)
     list(APPEND PORT_DEFS -DPSX_EXC_SELFTEST)
 endif()
