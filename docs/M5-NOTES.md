@@ -201,3 +201,89 @@ at the end. The hole then shrinks from 38 ms to about 3, which is a tear rather
 than a flash. That is the next piece of work, and it is also the shape the
 PlayStation wanted in the first place: build an ordering table, hand it to the
 GPU once.
+
+---
+
+## 7. Where a frame actually goes
+
+Two instruments went in, both under `-DPSX_M5=ON` and both kept:
+`translate/p_ob_iso.c` splits `AffObjetIso` four ways, and `psx_m5.c` turns the
+debug marks that found the stall in §5 into a frame clock. Between them a frame
+is fully accounted for, and the first thing they did was correct §4.
+
+**`AffObjetIso` is not 38 ms in the loop. It is 16.** The engine has a preclip:
+`AffScene` projects each object's origin and tests it against the view
+rectangle before the object reaches the sort list, so cube 0 transforms **one**
+object, not eleven. M4's 94 ms was the harness brute-forcing all 23, which the
+game never does. The claim in §4 — that the frame was 40 ms and 38 of them were
+the actors — was arithmetic on a number measured under different conditions,
+and it was wrong.
+
+What a frame is, cube 0, with vsync and the ordering table both in:
+
+| | |
+|---|---|
+| MainLoop's game logic | 4 ms |
+| `AffScene`, entry to present | 28 ms, of which ~9 is the vsync wait |
+| the actor replay | 0 ms |
+| the fade | 0 ms |
+| **frame** | **34 ms, 29 fps** |
+
+and inside `AffObjetIso`, for 136 entities:
+
+| | |
+|---|---|
+| transform (`AnimNuage`) | 2 ms |
+| entity build | 5 ms |
+| sort (`SergeSort`) | 1 ms |
+| **emit** | **10 ms** |
+
+## 8. One DMA instead of 137
+
+The profile's real finding was not in the engine at all. Handing 137 primitives
+to the GPU one `DrawPrim` at a time cost **13 ms of a 50 ms frame** — more than
+the transform, the entity build and the sort together.
+
+The packets were already contiguous in the frame buffer and already in the
+engine's back-to-front order. Writing the address of the next one into the low
+24 bits of each tag makes that buffer a linked list, which is what the
+PlayStation calls an ordering table, and `DrawOTag` sends the frame in a single
+DMA with the CPU out of the loop.
+
+| | frame | fps | replay |
+|---|---|---|---|
+| a `DrawPrim` per primitive | 50 ms | 19 | 13 ms |
+| one `DrawOTag` | **34 ms** | **29** | **0 ms** |
+
+The frame crossed 33.3 ms, so it lands on two fields instead of three: **the
+picture is locked to 30 fps**. The occasional 51 ms frame is one that slipped a
+field.
+
+M4 wrote that "the engine's sort IS the ordering table" and meant it as an
+observation about ordering. It was also an observation about submission, and
+nobody noticed for a milestone.
+
+## 9. What M5 leaves
+
+- **The emit is 10 of `AffObjetIso`'s 18 ms** — `PORT_ActorPoly`'s
+  Sutherland-Hodgman clip and a palette lookup per vertex. The next frame time
+  is in there.
+- **`ChangeCube` is still 18.8 s.** Nothing here touched it. What got faster
+  this session is the *boot*, via `-DPSX_SKIP_INTRO=ON`: the bumpers, their
+  fades and an FLA intro that is not on the disc cost about ninety seconds of
+  emulated CD before any measurement started.
+- **One actor is not a crowd.** Every number above is cube 0 with a single
+  object on camera. The primitive buffer holds about 290 gouraud triangles and
+  drops the excess; nothing has yet been run that comes near it.
+- **The 51 ms frames.** Work is ~24 ms against a 33.3 ms budget, so the margin
+  is 9 ms and something occasionally eats it.
+- **Nothing here has been run under PCSX-Redux** since the `mfc0` fix. It
+  should still work; it has not been checked.
+
+### A gotcha, at the cost of one wasted run
+
+**mkpsxiso cannot overwrite the disc image while the emulator has it open, and
+says so on a channel nobody was reading.** Twenty minutes of debugging a build
+that had never been written. Kill the emulator *before* the build, not after —
+same family as session 2's "`make_cd.py` runs after the build and before
+mkpsxiso".

@@ -12,10 +12,12 @@ developed against.
 
 ## Status
 
-Session 2 of the project. There is no playable build yet, but **a Little Big
-Adventure scene is on screen at 640x480 with Twinsen standing in it** — the
-background built out of the brick grid by the 1994 software path, the actor
-rasterised by the GPU — off a CD image made from your own copy of the game.
+Session 3 of the project. **The engine's own game loop runs a Little Big
+Adventure scene at 640x480 and 30 frames a second**, locked to the field, with
+Twinsen animating in it — the background built out of the brick grid by the
+1994 software path, the actor rasterised by the GPU — off a CD image made from
+your own copy of the game. Nobody can control it yet: input is the next
+milestone.
 
 It fits in 2 MB. The engine reaches its first scene with 1535 KB allocated
 against 1574 KB of heap, once three things move: `Log` and `Screen` become one
@@ -25,9 +27,15 @@ SPU), and the MCGA page is allocated on demand. That is 554 KB, and 39 KB
 spare. The GPU actor path then costs **zero** further bytes of main RAM, which
 is what the first of those three moves was betting on.
 
-A scene load costs 3.9 s and composing the background costs 588 ms. Both are
-measured, both are worse than predicted, and neither is a frame rate — there is
-no frame loop yet.
+A frame is 34 ms: four of game logic, eighteen of transforming and emitting the
+actor, one to put the dirty rectangle in VRAM, and nine waiting for the vertical
+blank. The whole frame's primitives go to the GPU as a single DMA chain, which
+is the ordering table the machine always wanted; the background reaches VRAM as
+one rectangle of about 2700 pixels rather than a 307200-pixel screen, because
+the engine has tracked its own dirty boxes since 1994.
+
+A scene load costs 18.8 s, which is a defect rather than a load time and the
+next thing after input.
 
 What exists:
 
@@ -43,6 +51,9 @@ What exists:
   was most afraid of.
 - [`docs/M4-NOTES.md`](docs/M4-NOTES.md) — the actors on the GPU, and why
   replacing a rasteriser turned out to be the smallest change in the project.
+- [`docs/M5-NOTES.md`](docs/M5-NOTES.md) — the frame loop, the dirty rectangles
+  that made it cheap, and the load-delay slot a second emulator found in a
+  handler three milestones had called correct.
 - [`engine/`](engine/) and [`translate/`](translate/) — the 1994 engine and the
   C translations of its assembly modules, inherited from the DS port.
 - [`platform/psx/`](platform/psx/) — the PlayStation HAL: the CD, the video
@@ -113,6 +124,7 @@ docker run --rm -v ${PWD}:/work -w /work/platform/psx psx-lba-psn00b sh -c     '
 python tools/make_cd.py "/path/to/Little Big Adventure/Speedrun/Windows"
 docker run --rm -v ${PWD}:/work -w /work psx-lba-psn00b     mkpsxiso -y -o build/lba1psx.bin -c build/lba1psx.cue build/iso.xml
 
+duckstation-qt -batch -fastboot build/lba1psx.cue   # then grep its log
 pcsx-redux -run -stdout -interpreter -iso build/lba1psx.cue
 ```
 
@@ -121,9 +133,11 @@ run *after* the build and *before* `mkpsxiso`. Two build knobs matter:
 
 | | |
 |---|---|
+| `-DPSX_M5=ON` | run the engine's game loop on a fixed cube. Turns M3 off |
 | `-DPSX_M3=ON` (default) | stop at one static scene instead of the main menu |
 | `-DPSX_M4=ON` (default) | draw the scene's actors on the GPU after it |
 | `-DPSX_M3_CUBE=n` | which scene the harness opens (0 default, 59 the heaviest) |
+| `-DPSX_SKIP_INTRO=ON` | skip the bumpers and the FLA intro — ninety seconds of boot |
 | `-DPSX_EXC_SELFTEST=ON` | fault on purpose, to prove the crash handler is armed |
 
 The DS half of the calibration benchmark needs devkitARM instead:
