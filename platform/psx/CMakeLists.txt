@@ -37,6 +37,11 @@ option(PSX_EXC_SELFTEST "fault on purpose at boot to test psx_exc.c" OFF)
 # M4 draws the scene's actors on the GPU at the end of the M3 harness.
 option(PSX_M4 "draw the actors through the GPU after the M3 scene" ON)
 
+# Which scene the harness opens. 0 is Twinsen's house; 59 is the heaviest in
+# the game by brick data (tools/scene_census.py) and is the one to check a
+# memory claim against.
+set(PSX_M3_CUBE 0 CACHE STRING "the cube the M3/M4 harness loads")
+
 set(PORT_DEFS -DPORT_PSX)
 if(PSX_M3)
     list(APPEND PORT_DEFS -DPORT_PSX_M3)
@@ -44,6 +49,7 @@ endif()
 if(PSX_M4)
     list(APPEND PORT_DEFS -DPORT_PSX_M4)
 endif()
+list(APPEND PORT_DEFS -DPSX_M3_CUBE=${PSX_M3_CUBE})
 if(PSX_EXC_SELFTEST)
     list(APPEND PORT_DEFS -DPSX_EXC_SELFTEST)
 endif()

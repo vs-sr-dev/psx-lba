@@ -156,10 +156,12 @@ scored as a move was a cost that had never been paid. The three things that
 actually made the port fit are `Log`, `BufSpeak` and `Phys`: **554 KB**, not
 the 751 KB M2 credited.
 
-Two caveats on the 39 KB, and both are real. It is measured on one of the
-smallest scenes in the game. And `HQM` is fixed at the inherited constant
-400000 while cube 0 uses 139 KB of it, so the margin against the *largest*
-scene is unknown. Sizing `HQM` from a census of all 120 cubes is the obvious
+Two caveats on the 39 KB. It is measured on one of the smallest scenes in the
+game, and `HQM` is fixed at the inherited constant 400000 while cube 0 uses
+139 KB of it, so the margin against the *largest* scene was unknown.
+
+**It is not unknown any more** — `tools/scene_census.py` reproduces
+`InitGrille` and `LoadUsedBrick` offline over all 120 scenes. See §7. Sizing `HQM` from a census of all 120 cubes is the obvious
 next measurement, and it may well give a large part of that 391 KB back.
 
 ---
@@ -316,7 +318,86 @@ address is legal.
 
 ---
 
-## 7. Next
+## 7. Every scene, measured without a console
+
+`tools/scene_census.py` walks the used-block bitmap in each `.gri`, follows it
+into the `.bll` block records, collects every brick each one references and
+sums their decompressed sizes out of `LBA_BRK.HQR`. That is `LoadUsedBrick`,
+in Python, over all 120 scenes at once — and it answers two questions the
+milestone left open without needing hardware.
+
+**HQM is safe.** The pool holds the map, the block table and the brick mask.
+The mask cannot be computed offline — `CreateMaskGph` emits a run-length mask
+that `HQM_Shrink_Last` then trims — so the census counts it at the full size of
+the brick data it covers, which is a deliberate over-estimate. Even so:
+
+| | gri | bll | brick bytes | HQM upper bound |
+|---|---|---|---|---|
+| cube 59, the worst | 15970 | 6014 | 351894 | **373878** |
+| cube 117 | 22932 | 6178 | 333206 | 362316 |
+| cube 0, the one measured | 19732 | 6346 | 236142 | 262220 |
+
+**373878 against a 400000-byte pool.** Every scene in the game fits, at a bound
+built to be pessimistic. The 39 KB margin is not a claim about one small scene
+any more.
+
+### Then cube 59 was actually run
+
+`-DPSX_M3_CUBE=59` builds the harness against any scene, so the estimate did
+not have to stand. The machine's answer:
+
+| | cube 0 | cube 59 |
+|---|---|---|
+| HQM used | 141936 | **144280** of 400000 |
+| heap in use at the scene | 1535 KB | **1535 KB** |
+| `ChangeCube` | 3894 ms | 5775 ms |
+| `AffGrille` | 589 ms | **152 ms** |
+
+Three things, and the first two are the ones that matter.
+
+**The heap total is identical.** 1535 KB on the game's heaviest scene and on
+one of its lightest. The 39 KB margin was never a small-scene artefact — the
+big allocations are all fixed-size buffers sized for the worst case up front,
+which is exactly what a 1994 DOS engine would do and exactly what makes this
+port's budget predictable.
+
+**HQM uses 144 KB of 400 KB on the worst scene in the game.** My estimate above
+said "near 200 KB" and was too high by a third; the census's upper bound of
+373878 was too high by 2.6x. Both were wrong in the safe direction, and the
+real figure means **roughly 250 KB of the HQM pool is dead weight**. Reclaiming
+it would take the port's margin from 39 KB to something near 290 — which is the
+difference between a fit that survives no surprises and one that survives
+several. It wants one more measurement across all 120 scenes before the
+constant is changed, and that is now a loop rather than a project.
+
+**`AffGrille` varies fourfold between scenes**, and not in the direction the
+brick totals suggest: cube 59 has 50% more brick data than cube 0 and composes
+in a quarter of the time. The cost tracks how much of the grid is on camera,
+not how much of it exists. So M3's 589 ms is not a worst case, and neither is
+this — the honest statement is that a scene change costs somewhere between 150
+and 600 ms of compose, and nobody has found the top of that range yet.
+
+`ChangeCube` at 5775 ms does scale with brick data, which confirms it is the CD
+and not the CPU. That is 5.8 seconds of load for one room.
+
+**And the guard did not fire**, which is the census's arithmetic being
+confirmed by the machine: cube 59's brick set fits `BufferBrick`, by 9578
+bytes.
+
+**`BufferBrick` has almost nothing left.** The brick set goes into a fixed
+361472-byte allocation — `MAX_SIZE_BRICK_CUBE` in `GRILLE.H` — and cube 59
+needs **351894 of it. 9578 bytes spare, 2.6%.**
+
+`LoadUsedBrick` does not check. It writes brick after brick into the buffer and
+returns the total, and nothing compares that total to the size of what it just
+filled. On DOS that was a constant tuned against the shipped data and it held;
+here it is 353 KB of a 1574 KB heap with a 2.6% margin and no guard, sitting
+directly upstream of every scene load. Adding the check costs four lines and
+turns a silent heap corruption into a named error. It is on the list.
+
+---
+
+## 8. Next
 
 - **Run everything under `-interpreter` from here on.** Nothing that has only
   been run under the recompiler has been tested for alignment.

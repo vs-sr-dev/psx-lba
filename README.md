@@ -123,6 +123,7 @@ run *after* the build and *before* `mkpsxiso`. Two build knobs matter:
 |---|---|
 | `-DPSX_M3=ON` (default) | stop at one static scene instead of the main menu |
 | `-DPSX_M4=ON` (default) | draw the scene's actors on the GPU after it |
+| `-DPSX_M3_CUBE=n` | which scene the harness opens (0 default, 59 the heaviest) |
 | `-DPSX_EXC_SELFTEST=ON` | fault on purpose, to prove the crash handler is armed |
 
 The DS half of the calibration benchmark needs devkitARM instead:
@@ -141,7 +142,12 @@ same file names and completely different contents.
 
 ```sh
 python tools/poly_census.py "/path/to/Little Big Adventure/Speedrun/Windows"
+python tools/scene_census.py "/path/to/Little Big Adventure/Speedrun/Windows"
 ```
+
+`scene_census.py` reproduces `InitGrille` and `LoadUsedBrick` offline over all
+120 scenes, which is how the port found that the heaviest one leaves 2.6% of
+headroom in a buffer nothing was checking.
 
 ## Licence
 

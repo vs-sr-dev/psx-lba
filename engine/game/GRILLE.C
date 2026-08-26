@@ -206,6 +206,28 @@ LONG LoadUsedBrick(ULONG size)
 			offseek = *(ptseek + i);
 			Seek(handle, offseek, SEEK_START);
 			Read(handle, &header, sizeof(header));
+
+			/* PORT: BufferBrick is a fixed MAX_SIZE_BRICK_CUBE allocation and
+			 * nothing here ever compared the running total against it -- the
+			 * 1994 constant was tuned against the shipped data and simply
+			 * held. It still holds, but only just: tools/scene_census.py puts
+			 * the worst scene (cube 59) at 351894 bytes of 361472, a margin of
+			 * 2.6%. Overrunning it would write past a 353 KB heap block and
+			 * surface as corruption somewhere else entirely, which on a
+			 * machine with no MMU is the expensive kind of bug.
+			 *
+			 * The +500 is the LZS case below, which stages the compressed
+			 * bytes at ptdata + SizeFile - CompressedSizeFile + 500 and
+			 * therefore touches SizeFile + 500 bytes from ptdata. */
+			if (offset + header.SizeFile + 500 > MAX_SIZE_BRICK_CUBE)
+			{
+				PORT_Diag("ERROR: BufferBrick overflow at brick %d: "
+						  "%d + %d > %d\n",
+						  (int)i, (int)offset, (int)header.SizeFile,
+						  (int)MAX_SIZE_BRICK_CUBE);
+				Close(handle);
+				return (0L);
+			}
 			switch (header.CompressMethod)
 			{
 			case 0:

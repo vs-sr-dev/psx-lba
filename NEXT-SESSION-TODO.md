@@ -49,6 +49,13 @@ on. Scene load 3.9 s, background compose 588 ms. There is no frame loop yet.
    past the first bumper screen since M1. Both fixed; it boots unattended now.
    `MainLoop`'s frame regulator waits on `TimerRef`, so this would have stopped
    the game loop dead the first time it ran.
+7. **The 39 KB margin is not a small-scene artefact.** Cube 59, the heaviest
+   scene in the game, uses exactly the same 1535 KB — the big allocations are
+   fixed-size buffers sized for the worst case up front. And **`AffGrille` is
+   scene-dependent by 4x in the direction nobody would guess**: cube 59 has 50%
+   more brick data than cube 0 and composes in 152 ms against 589. The cost
+   tracks what is on camera, not what exists, so neither figure is a worst
+   case.
 
 ## Measured numbers (do not re-measure)
 
@@ -65,6 +72,10 @@ on. Scene load 3.9 s, background compose 588 ms. There is no frame loop yet.
 | cube 0 objects | 23, of which 11 have bodies and **1 is on screen** |
 | Twinsen, as GPU primitives | 105 polygons, 19 lines, 5 spheres |
 | main RAM cost of the actor path | **zero** |
+| cube 59 (the game's heaviest scene) | heap **1535 KB, identical to cube 0** |
+| HQM on cube 59 | **144280** of 400000 |
+| `ChangeCube` / `AffGrille` on cube 59 | 5775 ms / **152 ms** |
+| worst brick set in the game (cube 59) | 351894 of BufferBrick's 361472 — **2.6% spare** |
 
 The two heaps differ by 80 KB because the M3 harness replaces `MainGameMenu`
 and the linker garbage-collects most of `GAMEMENU.C` with it. **Always check a
@@ -157,6 +168,7 @@ Build knobs, all in `platform/psx/CMakeLists.txt`:
 |---|---|
 | `-DPSX_M3=ON` (default) | stop at one static scene instead of the main menu |
 | `-DPSX_M4=ON` (default) | draw the scene's actors on the GPU after it |
+| `-DPSX_M3_CUBE=59` | which scene the harness opens (0 default; 59 is the heaviest) |
 | `-DPSX_EXC_SELFTEST=ON` | fault on purpose, to test the crash handler |
 | `-DPSX_EXC_TRACE=ON` | one BIOS `putchar` at the top of the fatal path, then stop |
 
