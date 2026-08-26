@@ -81,6 +81,18 @@ LONG HQM_Alloc(ULONG size, void **ptr)
 
 		return TRUE;
 	}
+	/* PORT: this used to be the whole failure path -- a null pointer handed
+	 * back to a caller that mostly does not look. GRILLE.C checks BufMap and
+	 * TabBlock; LoadScene does not check the fiche it just asked for, and
+	 * CreateMaskGph would have written a mask through the null. Since M7 the
+	 * pool is sized from a census rather than from 1994, so an overflow is a
+	 * thing that can happen, and it says so. */
+#ifdef PORT_PSX
+	PORT_Diag("[MEM] HQM refused %lu bytes: %lu of %lu used\n",
+			  (unsigned long)size,
+			  (unsigned long)(Size_HQM_Memory - Size_HQM_Free),
+			  (unsigned long)Size_HQM_Memory);
+#endif
 	*ptr = 0;
 	return FALSE; // pas assez de place
 }

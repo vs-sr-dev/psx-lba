@@ -67,6 +67,11 @@ void  PSX_free(void *p);
  * declaration otherwise, which assumes int f() -- passing varargs through that
  * is undefined. One prototype here covers every engine TU. */
 void PORT_Diag(const char *fmt, ...);
+void PORT_PresentMcga(void);
+void PORT_BgStoreAll(void);
+void PORT_BgFetchAll(void);
+void PORT_BgStore(long x0, long y0, long x1, long y1);
+void PORT_BgFetch(long x0, long y0, long x1, long y1);
 
 /* The real answer to Malloc(-1); see psx_sys.c and LIB_SYS/MALLOC.C. */
 unsigned long PORT_HeapLargestFree(void);

@@ -98,3 +98,75 @@ LONG CalcGraphMsk(LONG num, void *bank, void *mask)
 
 	return (LONG)(pDest - pStart);
 }
+
+/* PORT: CalcGraphMsk with the stores taken out.
+ *
+ * GRILLE.C used to allocate the mask buffer at the size of the brick bank --
+ * 351894 bytes on the heaviest scene -- build a mask about a fifth of that
+ * into it, and shrink. The buffer only ever held its real contents; for the
+ * length of one call HQM had to be big enough for the other four fifths, and
+ * that transient is what pinned the pool at 400000 bytes. Measuring first
+ * costs one extra walk of the brick data -- no decompression, no writes --
+ * and lets the allocation be exact. docs/M7-NOTES.md, tools/scene_census.py.
+ *
+ * This must return exactly what CalcGraphMsk writes. The two walks are the
+ * same walk; InitGrille compares the results and refuses the scene if they
+ * ever disagree. */
+LONG SizeGraphMsk(LONG num, void *bank)
+{
+	UBYTE *pSrc;
+	LONG size;
+	UBYTE nbline;
+	UBYTE nbblock;
+	UBYTE nbdata;
+	UBYTE op, cl;
+
+	pSrc = (UBYTE *)bank + ((ULONG *)bank)[num];
+
+	size = 4;                       /* DX, DY, Hot X, Hot Y */
+	nbline = pSrc[1];
+	pSrc += 4;
+
+	do  /* NextLine — a DY of 0 runs 256 times, as in the ASM */
+	{
+		nbdata = 0;
+		size++;                     /* the NbBlockDst slot */
+
+		nbblock = *pSrc++;
+
+		if (*pSrc & 0xC0)           /* line MUST begin with a JumpZero */
+			size++;
+
+		do  /* SameLine */
+		{
+			op = *pSrc++;
+			cl = (UBYTE)((op & 0x3F) + 1);
+
+			if (op & 0x80)          /* RepeatCol: cl pixels, 1 data byte */
+			{
+				nbdata = (UBYTE)(nbdata + cl);
+				pSrc++;
+			}
+			else if (op & 0x40)     /* CopyCol: cl pixels, cl data bytes */
+			{
+				nbdata = (UBYTE)(nbdata + cl);
+				pSrc += cl;
+			}
+			else                    /* Jump cl zeros */
+			{
+				if (nbdata)
+				{
+					size++;
+					nbdata = 0;
+				}
+				size++;
+			}
+		} while (--nbblock);
+
+		if (nbdata)                 /* Cloture eventuelle */
+			size++;
+
+	} while (--nbline);
+
+	return size;
+}

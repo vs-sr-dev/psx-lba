@@ -12,6 +12,13 @@
 
 #include "translate.h"
 
+#ifdef PORT_PSX_BG_VRAM
+extern UBYTE *Screen;
+extern UBYTE *Log;
+void PORT_BgStore(LONG x0, LONG y0, LONG x1, LONG y1);
+void PORT_BgFetch(LONG x0, LONG y0, LONG x1, LONG y1);
+#endif
+
 /* ASM: CopyBlock */
 void CopyBlock(LONG x0, LONG y0, LONG x1, LONG y1, void *src,
                LONG xd, LONG yd, void *dst)
@@ -20,6 +27,27 @@ void CopyBlock(LONG x0, LONG y0, LONG x1, LONG y1, void *src,
 	UBYTE *pSrc;
 	UBYTE *pDest;
 	LONG width, lines;
+
+#ifdef PORT_PSX_BG_VRAM
+	/* PORT: `Screen`, the clean background, is in VRAM on this machine --
+	 * see psx_video.c. ClsBoxes restores dirty boxes out of it every frame
+	 * and AffScene bakes OBJ_BACKGROUND actors into it, both through here.
+	 *
+	 * The destination offset is the source offset at every one of those call
+	 * sites (a background copy is in place by definition), so the DMA path
+	 * only handles that case and anything else falls through to the memcpy,
+	 * which on a 64 KB scratch Screen would at least stay inside it. */
+	if (src == (void *)Screen && dst == (void *)Log && xd == x0 && yd == y0)
+	{
+		PORT_BgFetch(x0, y0, x1, y1);
+		return;
+	}
+	if (dst == (void *)Screen && src == (void *)Log && xd == x0 && yd == y0)
+	{
+		PORT_BgStore(x0, y0, x1, y1);
+		return;
+	}
+#endif
 
 	pSrc = (UBYTE *)src + pTabOffLine[y0] + x0;
 	pDest = (UBYTE *)dst + pTabOffLine[yd] + xd;

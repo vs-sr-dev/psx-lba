@@ -648,6 +648,18 @@ void PlaySpeakVoc(LONG fd)
 
 	if (method == 0)
 		Read(fd, BufSpeak, size);
+#ifdef PORT_PSX_BG_VRAM
+	/* PORT: this stages up to 256 KB of packed voice inside `Screen`, which
+	 * since M7 is a 64 KB scratch buffer (PERSO.C). The VOX files are not on
+	 * the disc and the voices are an SPU job when they arrive, so the packed
+	 * case is refused rather than staged. */
+	else
+	{
+		PORT_Diag("[VOX] packed voice needs a 256 KB stage; not on this "
+				  "machine\n");
+		return;
+	}
+#else
 	else
 	{
 		CopyScreen(Screen, Log);
@@ -655,6 +667,7 @@ void PlaySpeakVoc(LONG fd)
 		Expand(Screen, BufSpeak, size);
 		CopyScreen(Log, Screen);
 	}
+#endif
 
 	FlagNextVoc = *BufSpeak;
 	/*

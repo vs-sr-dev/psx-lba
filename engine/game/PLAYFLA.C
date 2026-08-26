@@ -373,7 +373,16 @@ WORD InitFla(char *name)
 	WORD nb_fois_joue;
 	LONG size;
 
+#ifdef PORT_PSX_BG_VRAM
+	/* PORT: one FLA frame is up to 80000 bytes and `Screen` holds 64 KB
+	 * since M7 (PERSO.C). No .FLA ships on this disc -- PSX_SKIP_INTRO
+	 * stops looking for them -- so the player borrows Log, which is the
+	 * surface it is about to overwrite anyway. Whether the 2023 remaster's
+	 * Common/Fla is format-identical is still M8's question. */
+	BufferFrame = Log;
+#else
 	BufferFrame = Screen; // Malloc( 80000L ) For One Frame(image, couleur...)
+#endif
 
 	HandleFla = OpenRead(name);
 	if (!HandleFla)

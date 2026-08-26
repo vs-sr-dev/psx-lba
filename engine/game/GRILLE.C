@@ -25,6 +25,7 @@
 UBYTE *GetAdrBlock(LONG numblock);
 UBYTE GetColBrick(WORD xm, WORD ym, WORD zm);
 ULONG CreateMaskGph(UBYTE *pt, UBYTE *dest);
+ULONG SizeMaskGph(UBYTE *pt);
 /*-------------------------------------------------------------------------*/
 
 LONG StartXCube = 0;
@@ -80,7 +81,16 @@ void ReajustPos(UBYTE col);
 		 ▀▀  ▀ ▀▀▀▀  ▀▀  ▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀  ▀  ▀▀   ▀▀▀▀▀ ▀▀  ▀
  *══════════════════════════════════════════════════════════════════════════*/
 #define MAX_BRICK_GAME 10000L
+#ifdef PORT_PSX_BG_VRAM
+/* PORT: `Screen` is 64 KB here, not 300 -- the background it used to double
+ * as now lives in VRAM (PERSO.C, psx_video.c). This offset only has to clear
+ * the LBA_BRK offset table that gets read into Screen just below, which is
+ * 34864 bytes in the shipped archive; 40960 leaves room and still puts the
+ * 20000-byte flag table inside the buffer. */
+#define OFFSET_BUFFER_FLAG 40960L
+#else
 #define OFFSET_BUFFER_FLAG 153800L
+#endif
 
 char *NameHqrGri = PATH_RESSOURCE "LBA_GRI.HQR";
 char *NameHqrBll = PATH_RESSOURCE "LBA_BLL.HQR";
@@ -179,6 +189,19 @@ LONG LoadUsedBrick(ULONG size)
 
 	Read(handle, &nbentity, 4L);
 	Seek(handle, 0L, SEEK_START);
+
+	/* PORT: the archive's whole offset table is staged in Screen below the
+	 * flag table, and Screen is 64 KB on this machine rather than 300 (see
+	 * OFFSET_BUFFER_FLAG above). 34864 bytes in the shipped LBA_BRK, but a
+	 * modded archive is a heap overrun and not an error message. */
+	if (nbentity > OFFSET_BUFFER_FLAG)
+	{
+		PORT_Diag("ERROR: LBA_BRK's offset table is %lu bytes, Screen stages "
+				  "%lu\n", (unsigned long)nbentity,
+				  (unsigned long)OFFSET_BUFFER_FLAG);
+		Close(handle);
+		return (0L);
+	}
 
 	Read(handle, Screen, nbentity);
 	nbentity >>= 2;
@@ -279,6 +302,8 @@ LONG InitGrille(UWORD numcube)
 	ULONG sizegri;
 	ULONG sizebll;
 	ULONG size;
+	ULONG bank;
+	ULONG masksize;
 
 	//	BufCube = Malloc(SIZE_CUBE_X*SIZE_CUBE_Y*SIZE_CUBE_Z*2L ) ;
 	//	if ( BufCube == 0L )	return(0L)		;
@@ -307,14 +332,53 @@ LONG InitGrille(UWORD numcube)
 	size = LoadUsedBrick(sizegri);
 	if (!size)
 		return (0L);
+	bank = size;
 
 	/*	Message("     End Loading Brick       ", FALSE );*/
 	/*----------------------------------------------*/
 
-	HQM_Alloc(size, (void **)&BufferMaskBrick);
+	/* PORT: measure the mask, then allocate it.
+	 *
+	 * The 1994 code asked HQM for `size` -- the whole brick bank, 351894 bytes
+	 * on cube 59 -- built a mask a fifth of that into it, and shrank. The pool
+	 * never held the difference for more than one call, but it had to be able
+	 * to, and that is the only reason HQM was 400000 bytes: the census puts the
+	 * peak on the worst scene at 384696 of it, and the settled figure at 96628.
+	 * The engine's own CHECK_MEMORY samples after the shrink and never saw it.
+	 *
+	 * SizeMaskGph is the same walk as CreateMaskGph with the stores removed, so
+	 * the two cannot disagree -- but a silent disagreement would be a heap
+	 * overrun into the bodies allocated next, so it is checked.
+	 * tools/scene_census.py, docs/M7-NOTES.md. */
+	masksize = SizeMaskGph(BufferBrick);
+
+	HQM_Alloc(masksize, (void **)&BufferMaskBrick);
+	if (!BufferMaskBrick)
+	{
+		PORT_Diag("ERROR: HQM has no room for a %lu-byte brick mask "
+				  "(%lu of %lu used)\n",
+				  (unsigned long)masksize,
+				  (unsigned long)(Size_HQM_Memory - Size_HQM_Free),
+				  (unsigned long)Size_HQM_Memory);
+		return (0L);
+	}
+
 	size = CreateMaskGph(BufferBrick, BufferMaskBrick);
+	if (size != masksize)
+	{
+		PORT_Diag("ERROR: brick mask is %lu bytes, %lu were reserved\n",
+				  (unsigned long)size, (unsigned long)masksize);
+		return (0L);
+	}
 	HQM_Shrink_Last(BufferMaskBrick, size);
 	CHECK_MEMORY
+
+	PORT_Diag("[MEM] cube %d: gri %lu bll %lu bank %lu mask %lu -- "
+			  "HQM %lu of %lu\n",
+			  (int)numcube, (unsigned long)sizegri, (unsigned long)sizebll,
+			  (unsigned long)bank, (unsigned long)masksize,
+			  (unsigned long)(Size_HQM_Memory - Size_HQM_Free),
+			  (unsigned long)Size_HQM_Memory);
 
 	/*	BufferMaskBrick = Malloc( size ) 	;
 		size = CreateMaskGph( BufferBrick, BufferMaskBrick ) ;
@@ -433,6 +497,29 @@ void GetShadow(WORD xw, WORD yw, WORD zw)
  *══════════════════════════════════════════════════════════════════════════*/
 /*──────────────────────────────────────────────────────────────────────────*/
 
+/* PORT: what CreateMaskGph below is about to write, without writing it.
+ *
+ * The mask buffer used to be allocated at the size of the brick bank and
+ * shrunk afterwards, which meant HQM had to be large enough for a buffer that
+ * was five times bigger than its own contents, for the length of one call.
+ * See translate/graphmsk.c:SizeGraphMsk and docs/M7-NOTES.md. */
+ULONG SizeMaskGph(UBYTE *ptsrc)
+{
+	ULONG nbg, off, i;
+
+	off = *(ULONG *)ptsrc; /*	First Offset Src	*/
+
+	nbg = (off - 4) >> 2; /*	Nombre de Graph	*/
+
+	for (i = 0; i < nbg; i++)
+	{
+		off += SizeGraphMsk(i, ptsrc);
+	}
+	return (off);
+}
+
+/*-------------------------------------------------------------------------*/
+
 ULONG CreateMaskGph(UBYTE *ptsrc, UBYTE *ptdst)
 {
 	UBYTE *ptd;
@@ -522,6 +609,34 @@ void InitBufferCube()
  *══════════════════════════════════════════════════════════════════════════*/
 /*──────────────────────────────────────────────────────────────────────────*/
 
+/*
+ * DrawOverBrick redraws the bricks standing in front of an actor, by copying
+ * them out of the clean background through their own mask.
+ *
+ * On the PlayStation the actor is not in Log to be covered up: it is a GPU
+ * primitive drawn after the frame is presented (psx_poly.c), so nothing a
+ * software copy puts into Log can get in front of it. And since M7 `Screen`
+ * is a 64 KB scratch buffer rather than a 640x480 image -- the background it
+ * used to alias moved to VRAM -- so the copy would read 300 KB past its end.
+ *
+ * Occluding an actor with scenery on this machine means replaying those
+ * bricks as GPU primitives after the actors, with the mask as a texture.
+ * That is a real feature and it is M8's. This is where it would go.
+ */
+static void PORT_CopyMaskBg(LONG nummask, LONG x, LONG y, void *bankmask)
+{
+#ifdef PORT_PSX_BG_VRAM
+	(void)nummask;
+	(void)x;
+	(void)y;
+	(void)bankmask;
+#else
+	CopyMask(nummask, x, y, bankmask, Screen);
+#endif
+}
+
+/*--------------------------------------------------------------------------*/
+
 void DrawOverBrick(WORD xm, WORD ym, WORD zm)
 {
 	T_COLONB *ptrlbc;
@@ -545,7 +660,7 @@ void DrawOverBrick(WORD xm, WORD ym, WORD zm)
 				{
 					if ((ptrlbc->Xm + ptrlbc->Zm) > (xm + zm))
 					{
-						CopyMask(ptrlbc->Brick, col * 24 - 24, ptrlbc->Ys, BufferMaskBrick, Screen);
+						PORT_CopyMaskBg(ptrlbc->Brick, col * 24 - 24, ptrlbc->Ys, BufferMaskBrick);
 					}
 				}
 			}
@@ -617,13 +732,13 @@ void DrawOverBrick3(WORD xm, WORD ym, WORD zm)
 					if ((ptrlbc->Zm == zm)
 							AND(ptrlbc->Xm == xm))
 					{
-						CopyMask(ptrlbc->Brick, col * 24 - 24, ptrlbc->Ys, BufferMaskBrick, Screen);
+						PORT_CopyMaskBg(ptrlbc->Brick, col * 24 - 24, ptrlbc->Ys, BufferMaskBrick);
 					}
 
 					if ((ptrlbc->Zm > zm)
 							OR(ptrlbc->Xm > xm))
 					{
-						CopyMask(ptrlbc->Brick, col * 24 - 24, ptrlbc->Ys, BufferMaskBrick, Screen);
+						PORT_CopyMaskBg(ptrlbc->Brick, col * 24 - 24, ptrlbc->Ys, BufferMaskBrick);
 					}
 				}
 			}

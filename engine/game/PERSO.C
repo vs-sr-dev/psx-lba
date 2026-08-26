@@ -84,7 +84,13 @@ void CheckSavePcx()
 		strcat(NamePcxSave, itoa(NumPcxSave, "          ", 10));
 		AddExt(NamePcxSave, ".PCX");
 
+#ifdef PORT_PSX_BG_VRAM
+		/* PORT: Screen is 64 KB and in VRAM (see the allocation below); the
+		 * image the screenshot wants is the one in Log. */
+		Save_Pcx(NamePcxSave, Log, PtrPal);
+#else
 		Save_Pcx(NamePcxSave, Screen, PtrPal);
+#endif
 
 		NumPcxSave++;
 		while (Key)
@@ -578,7 +584,19 @@ LONG MainLoop()
 				switch (InventoryAction)
 				{
 				case 0: // holomap
+#ifdef PORT_PSX_BG_VRAM
+					/* PORT: the holomap lays its globe texture, coordinate table, altitude map
+					 * and bodies out inside `Screen` (HOLOMAP.C:InitHoloDatas). Screen was
+					 * 300 KB on DOS and is a 64 KB scratch buffer here since M7 -- the clean
+					 * background it used to alias moved to VRAM. It never worked on this
+					 * machine either way: with Screen aliased onto Log it laid the globe over
+					 * the live background. It wants an allocation and a port of its own, and
+					 * that is M8; until then it says so instead of writing 200 KB past a
+					 * buffer. docs/M7-NOTES.md. */
+					PORT_Diag("[HOLO] the holomap has no workspace on this machine yet\n");
+#else
 					HoloMap();
+#endif
 					FlagFade = TRUE;
 					break;
 
@@ -846,7 +864,12 @@ LONG MainLoop()
 			{
 				SaveTimer();
 				TestRestoreModeSVGA(TRUE);
+#ifdef PORT_PSX_BG_VRAM
+				/* PORT: see the other call site above -- no workspace for it. */
+				PORT_Diag("[HOLO] the holomap has no workspace on this machine yet\n");
+#else
 				HoloMap();
+#endif
 				FlagFade = TRUE;
 				RestoreTimer();
 				AffScene(TRUE);
@@ -1532,16 +1555,33 @@ void lba_main(int argc, UBYTE *argv[]) /* PORT: was main(); SDL wrapper in platf
 
 	// presentation
 
-#ifdef PORT_PSX
-	/* PORT: the second 640x480 image does not exist on this machine. Log is
-	 * the composed background and the GPU draws the actors over it, so there
-	 * is nothing for a clean copy to restore. 300 KB of 1575 KB, and it is
-	 * the allocation that decides whether the game fits at all -- see
-	 * psx_video.c:InitGraphSvga and docs/M3-NOTES.md.
+#ifdef PORT_PSX_BG_VRAM
+	/* PORT: `Screen` is two things in this engine wearing one name.
 	 *
-	 * Note the ordering this relies on: InitAdelineSystem() above has already
-	 * run InitGraphSvga(), so Log is allocated, with the same +500 margin the
-	 * line below asked for. */
+	 * It is the clean composed background that ClsBoxes and every modal
+	 * restore from, and it is a 300 KB scratch area that LoadUsedBrick, the
+	 * holomap, the FLA player and the voice loader all borrow. M3 aliased it
+	 * onto Log, which cost nothing and served the scratch role perfectly --
+	 * and quietly turned every background restore into a copy onto itself.
+	 * The shadow trail, the burned-in behaviour panel and the burned-in
+	 * inventory are all that one line. docs/M6-NOTES.md §5.
+	 *
+	 * M7 splits the two roles instead of paying 300 KB for both. The
+	 * background moves to VRAM, where the framebuffer leaves exactly enough
+	 * room for a 640x480 8bpp image (psx_video.c), and CopyScreen/CopyBlock
+	 * turn into DMA when either side is this pointer. What stays in RAM is
+	 * the scratch role, and the only user of it that survives on this machine
+	 * is LoadUsedBrick, which wants 34864 bytes of brick offsets and 20000 of
+	 * flags: GRILLE.C packs those into 56864 and this is 64 KB.
+	 *
+	 * The pointer still has to be distinct from Log -- that is what lets the
+	 * two copy primitives tell a background operation from a plain one. */
+	Screen = Malloc(64 * 1024 + 500); // + decomp marge
+#elif defined(PORT_PSX)
+	/* PORT: -DPSX_BG_VRAM=OFF is M3's answer, kept so a rendering bug can be
+	 * told apart from a background bug. It is NOT the line below: a real
+	 * 640x480 second buffer does not fit this heap and asking for one kills
+	 * the sprite pool two allocations later. */
 	Screen = Log;
 #else
 	Screen = Malloc(640 * 480 + 500); // + decomp marge
@@ -1637,7 +1677,32 @@ void lba_main(int argc, UBYTE *argv[]) /* PORT: was main(); SDL wrapper in platf
 	if (!InventoryObj)
 		TheEnd(NOT_ENOUGH_MEM, "HQR Inventory");
 
+	/* PORT: 400000 is the DOS constant, and until M7 nobody knew what it was
+	 * for. tools/scene_census.py reproduces a ChangeCube over all 120 scenes:
+	 * the pool settles at 96628 bytes on the heaviest one and 92940 on cube 0,
+	 * plus about 48 KB of bodies that SearchBody pulls in as the scene is
+	 * played -- 144280 measured on the console, and the census accounts for all
+	 * but the bodies exactly. What needed the other quarter of a megabyte was a
+	 * transient: InitGrille used to size the brick mask at the size of the
+	 * brick bank, taking the peak on cube 59 to 384696 of 400000. That is now
+	 * measured before it is allocated (GRILLE.C), so the peak is the settled
+	 * figure.
+	 *
+	 * 256 KB against a 102548-byte worst case leaves 155 KB for the one term
+	 * that cannot be bounded offline -- three times what a session has ever
+	 * used -- and hands 134 KB back to a heap that had 39.
+	 *
+	 * Bisect with -DPSX_HQM_MEMORY=<bytes>; an overflow is now reported by
+	 * name instead of returning a null pointer into CreateMaskGph. */
+#ifndef PSX_HQM_MEMORY
+#define PSX_HQM_MEMORY 262144
+#endif
+
+#ifdef PORT_PSX
+	if (!HQM_Init_Memory(PSX_HQM_MEMORY))
+#else
 	if (!HQM_Init_Memory(400000))
+#endif
 	{
 		TheEnd(NOT_ENOUGH_MEM, "HQMemory");
 	}

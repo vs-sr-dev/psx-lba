@@ -497,7 +497,19 @@ void ChangeCube()
 	{
 		TestRestoreModeSVGA(FALSE);
 		SetBlackPal();
+#ifdef PORT_PSX_BG_VRAM
+		/* PORT: the holomap lays its globe texture, coordinate table, altitude map
+		 * and bodies out inside `Screen` (HOLOMAP.C:InitHoloDatas). Screen was
+		 * 300 KB on DOS and is a 64 KB scratch buffer here since M7 -- the clean
+		 * background it used to alias moved to VRAM. It never worked on this
+		 * machine either way: with Screen aliased onto Log it laid the globe over
+		 * the live background. It wants an allocation and a port of its own, and
+		 * that is M8; until then it says so instead of writing 200 KB past a
+		 * buffer. docs/M7-NOTES.md. */
+		PORT_Diag("[HOLO] the holomap trajectory has no workspace on this machine yet\n");
+#else
 		HoloTraj(NumHolomapTraj);
+#endif
 		NumHolomapTraj = -1;
 	}
 
@@ -2609,9 +2621,10 @@ void AffScene(LONG flagflip)
 	   VRAM, over a background that lives in main RAM -- so they have to be
 	   drawn AFTER the frame's present, not before, or the present erases
 	   them. They are collected here and replayed at the tail (psx_poly.c).
-	   ClsBoxes above is a self-copy on this machine, Log and Screen being one
-	   allocation since M3, and correctly does nothing: nothing ever drew into
-	   Log to be cleaned up. */
+	   ClsBoxes above restores each dirty box out of the clean background,
+	   which since M7 lives in VRAM and comes back over DMA (psx_video.c). It
+	   was a copy onto itself from M3 until then, which is where the shadow
+	   trail and the burned-in modals came from. */
 	PORT_ActorBegin();
 #ifdef PORT_PSX_M5
 	PORT_M5_Mark("background cleaned");

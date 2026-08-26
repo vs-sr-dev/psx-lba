@@ -82,6 +82,23 @@ option(PSX_SKIP_INTRO "skip the bumpers and the FLA intro" OFF)
 if(PSX_SKIP_INTRO)
     list(APPEND PORT_DEFS -DSKIP_INTRO)
 endif()
+# The clean background in VRAM. The M6 shadow trail and the two burned-in
+# modals all come from `Screen` being aliased onto `Log` since M3, and the
+# 300 KB a real one wants are not in main RAM even after M7's HQM reclaim --
+# so the buffer lives beside the framebuffer instead. docs/M7-NOTES.md.
+# OFF gives M6's rendering with M7's memory work, which is the way to tell a
+# background bug from anything else.
+option(PSX_BG_VRAM "keep the clean background in VRAM" ON)
+if(PSX_BG_VRAM)
+    list(APPEND PORT_DEFS -DPORT_PSX_BG_VRAM)
+endif()
+# Write a known pattern into the VRAM background and read it straight back,
+# before anything else runs. Isolates the transfer from the frame around it.
+option(PSX_BG_SELFTEST "prove the VRAM background round-trips, at boot" OFF)
+if(PSX_BG_SELFTEST)
+    list(APPEND PORT_DEFS -DPORT_PSX_BG_SELFTEST)
+endif()
+
 if(PSX_EXC_SELFTEST)
     list(APPEND PORT_DEFS -DPSX_EXC_SELFTEST)
 endif()

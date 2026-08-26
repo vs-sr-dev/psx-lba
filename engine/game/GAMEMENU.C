@@ -1213,7 +1213,15 @@ void CopyBlockPhysMCGA(LONG x0, LONG y0, LONG x1, LONG y1)
 	 * when it is NULL nothing is displaying it, so there is nothing to
 	 * copy. */
 	if (Phys)
+	{
 		CopyBlockMCGA(x, y, x + 319, y + 199, Log, 0, 0, Phys);
+#ifdef PORT_PSX
+		/* PORT: on DOS Phys was 0xA0000, so filling it WAS presenting it.
+		 * Here it is a 64000-byte buffer in main RAM and something has to
+		 * push it to VRAM. psx_video.c:PORT_PresentMcga. */
+		PORT_PresentMcga();
+#endif
+	}
 #else
 	CopyBlockMCGA(x, y, x + 319, y + 199, Log, 0, 0, 0xA0000);
 #endif

@@ -41,6 +41,15 @@ void PORT_ExcSelfTest(void);
 /* ---- video (psx_video.c) ----------------------------------------------- */
 extern UBYTE PORT_PalRGB[768];  /* current 8-bit palette, DAC-quantised     */
 void PORT_PresentAll(void);     /* full Log -> VRAM                         */
+void PORT_PresentMcga(void);    /* the zoom's 320x200 crop -> VRAM          */
+
+/* The clean background, resident in VRAM because main RAM has no 300 KB for
+ * it. psx_video.c; the engine reaches these through CopyScreen and CopyBlock
+ * whenever one side of the copy is `Screen`. */
+void PORT_BgStoreAll(void);                         /* Log -> background     */
+void PORT_BgFetchAll(void);                         /* background -> Log     */
+void PORT_BgStore(LONG x0, LONG y0, LONG x1, LONG y1);
+void PORT_BgFetch(LONG x0, LONG y0, LONG x1, LONG y1);
 void PORT_PresentRect(LONG x0, LONG y0, LONG x1, LONG y1);
 /* Rectangles, pixels and microseconds sent to VRAM since the last call, which
  * this resets. The frame loop's bill; see psx_m5.c. */

@@ -6,6 +6,11 @@
 #include "LIB_SYS.H"
 #include "LIB_SAMP/LIB_WAVE.H"
 
+#ifdef PORT_PSX_BG_VRAM
+extern UBYTE *Screen;
+extern UBYTE *Log;
+#endif
+
 #define RECOVER_AREA 500
 
 /*══════════════════════════════════════════════════════════════════════════*
@@ -107,6 +112,25 @@ ULONG Load_HQR(UBYTE *name, void *ptrdest, UWORD index)
 	ULONG seekindex;
 	UBYTE *ptrdecomp;
 	T_HEADER header;
+#ifdef PORT_PSX_BG_VRAM
+	int tobackground = 0;
+#endif
+
+#ifdef PORT_PSX_BG_VRAM
+	/* PORT: ten call sites load a 640x480 .PCR into `Screen` and then do
+	 * CopyScreen(Screen, Log) -- the menu, the three intro paintings, the
+	 * bumpers, Sendell. On this machine Screen is a 64 KB scratch buffer and
+	 * the background it used to be is in VRAM, so the picture goes into Log
+	 * (the only 640x480 buffer there is) and the background copy follows it.
+	 * The CopyScreen(Screen, Log) that comes next then reads the picture back
+	 * out of VRAM and the call sites do not have to know any of this.
+	 * PERSO.C, psx_video.c. */
+	if (ptrdest == (void *)Screen)
+	{
+		ptrdest = Log;
+		tobackground = 1;
+	}
+#endif
 
 	handle = OpenRead(name);
 	if (!handle)
@@ -145,6 +169,11 @@ ULONG Load_HQR(UBYTE *name, void *ptrdest, UWORD index)
 	}
 
 	Close(handle);
+
+#ifdef PORT_PSX_BG_VRAM
+	if (tobackground)
+		PORT_BgStoreAll();
+#endif
 
 	return header.SizeFile;
 }

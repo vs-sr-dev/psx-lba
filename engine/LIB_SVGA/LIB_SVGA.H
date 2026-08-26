@@ -135,6 +135,7 @@ void CopyBlockOnBlack(LONG x0, LONG y0, LONG x1, LONG y1, void *src, void *dst);
 /*-----------------------------------------------------------------------------*/
 /*                      GRAPHMSK.asm                                                    */
 LONG CalcGraphMsk(LONG num, void *bank, void *mask);
+LONG SizeGraphMsk(LONG num, void *bank); /* PORT: the same walk, size only */
 /*-----------------------------------------------------------------------------*/
 /*                      S_BLOCK.asm                                                     */
 void CopyBlock(LONG x0, LONG y0, LONG x1, LONG y1, void *src,

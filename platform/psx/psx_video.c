@@ -27,6 +27,7 @@
 
 #include <psxgpu.h>
 #include <psxetc.h>
+#include <hwregs_c.h>
 
 #include "port.h"
 
@@ -34,8 +35,21 @@
 #define SCR_W       640
 #define SCR_H       480
 
-#define STAGE_X     640         /* one 8bpp texture page: 256x256 texels     */
+/* The upload tile stays where M1 put it, at the left edge of the free VRAM:
+ * one 8bpp texture page begins at x 640, and everything about the present
+ * path is calibrated against it. It is 128 texels wide now rather than 256,
+ * to leave the 320 halfwords the background needs to its right. */
+#define STAGE_X     640
 #define STAGE_Y     0
+
+/* The clean background -- the engine's `Screen` -- 640x480 8bpp packed two
+ * pixels to a halfword: 320 halfwords by 480 lines, and 704 + 320 is exactly
+ * the 1024 halfwords VRAM has. See PORT_BgStore below for why it is here and
+ * not in main RAM. */
+#define BG_X        704
+#define BG_Y        0
+#define BG_HW       (SCR_W / 2) /* 320 halfwords wide, to x 1023             */
+
 #define CLUT_X      0           /* under the framebuffer                     */
 #define CLUT_Y      480
 
@@ -70,9 +84,12 @@ static DISPENV disp;
 static DRAWENV draw;
 static int video_up;
 static int mode_x = SCR_W, mode_y = SCR_H;
+static int mcga_on;             /* the zoom, not a screen mode -- see below */
 
 static unsigned short clut[256];
-static unsigned char  stage[TILE_W * TILE_H];
+/* DMA'd in both directions, so it has to be word aligned: an array of
+ * char is not, by anything but luck. */
+static unsigned char  stage[TILE_W * TILE_H] __attribute__((aligned(4)));
 
 /* engine LIB_SYS */
 void *Malloc(LONG);
@@ -137,18 +154,34 @@ static void InitSvga(void)
     UnSetClip();
 }
 
+/*
+ * MCGA, which in this engine is not a screen mode: it is a zoom.
+ *
+ * A scene's life script can raise LM_ZOOM (GERELIFE.C), and what that asks
+ * for is the same 640x480 world, composed the same way, with a 320x200 window
+ * of it on the screen -- so the world looks twice as big. The engine keeps
+ * drawing at 640x480 throughout: CopyBlockPhysMCGA clamps its window to
+ * 640-320 and 480-200, CopyBlockMCGA reads it with a stride of 640, and
+ * AffScene centres the window on the followed actor's projected position.
+ *
+ * This used to set Screen_X/Screen_Y to 320x200 and rebuild TabOffLine, which
+ * put the composition and the window on different surfaces: the scene was
+ * drawn into the top-left 320x200 of Log and read back out with a 640 stride.
+ * Cube 59 zooms on entry, had only ever been run under the M3 harness (which
+ * runs no life scripts), and faulted the first time the game loop reached it.
+ *
+ * So the surface does not change. Only what is presented does: Phys, the
+ * 320x200 crop, in the middle of the field. docs/M7-NOTES.md.
+ */
 void InitMcgaMode(void)
 {
     EnsureVideo();
     if (!Phys)
         Phys = PSX_calloc(1, 64000);
     memset(Phys, 0, 64000);
-    mode_x = 320;
-    mode_y = 200;
-    Screen_X = 320;
-    Screen_Y = 200;
-    BuildTabOffLine();
-    UnSetClip();
+    mcga_on = 1;
+    PORT_Diag("[VID] zoom on: 320x200 of the 640x480 surface, Phys=%p\n",
+              (void *)Phys);
 }
 
 void SimpleInitSvga(void)
@@ -156,6 +189,7 @@ void SimpleInitSvga(void)
     EnsureVideo();
     if (Phys)
         memset(Phys, 0, 64000);
+    mcga_on = 0;
     mode_x = SCR_W;
     mode_y = SCR_H;
     Screen_X = SCR_W;
@@ -187,13 +221,67 @@ void SimpleInitSvga(void)
  * in place and overruns by up to 500 bytes. PERSO.C asked for that slack on
  * Screen, so Log has to carry it now instead.
  */
+
+#ifdef PORT_PSX_BG_SELFTEST
+static void VramRead(const RECT *r, uint32_t *dst);
+
+/*
+ * Does a rectangle written into the background come back?
+ *
+ * The write half works -- a full 640x480 upload lands and the frame after it
+ * presents normally. The read half is VramRead below, which had to be
+ * written by hand. This runs the round trip at boot with nothing else
+ * happening: no present queued, no scene load, no palette upload since the
+ * one InitSvga did. Whatever it says separates "VRAM reads do not work here"
+ * from "VRAM reads do not work while the frame is doing something else".
+ */
+static void BgSelfTest(void)
+{
+    static unsigned char probe[256] __attribute__((aligned(4)));
+    RECT r;
+    int i, bad = 0;
+
+    for (i = 0; i < 256; i++)
+        probe[i] = (unsigned char)i;
+
+    r.x = BG_X;
+    r.y = BG_Y;
+    r.w = 32;                       /* 64 pixels ... */
+    r.h = 4;                        /* ... by 4 lines is 256 bytes */
+
+    PORT_Diag("[BG] selftest: writing %d,%d %dx%d from %p\n",
+              r.x, r.y, r.w, r.h, (void *)probe);
+    DrawSync(0);
+    LoadImage(&r, (const uint32_t *)probe);
+    DrawSync(0);
+    PORT_Diag("[BG] selftest: written\n");
+
+    for (i = 0; i < 256; i++)
+        probe[i] = 0xAA;
+
+    PORT_Diag("[BG] selftest: reading back\n");
+    VramRead(&r, (uint32_t *)probe);
+    PORT_Diag("[BG] selftest: read returned\n");
+
+    for (i = 0; i < 256; i++)
+        if (probe[i] != (unsigned char)i)
+            bad++;
+
+    PORT_Diag("[BG] selftest: %d of 256 bytes wrong (first four %02x %02x "
+              "%02x %02x)\n", bad, probe[0], probe[1], probe[2], probe[3]);
+}
+#endif
+
 void InitGraphSvga(void)
 {
     InitSvga();
     Log = Malloc(640L * 480L + 500L);
     MemoLog = Log;
-    PORT_Diag("[VID] SVGA 640x480i, Log=%p (300 KB, shared with Screen)\n",
-              (void *)Log);
+    PORT_Diag("[VID] SVGA 640x480i, Log=%p (300 KB); clean background in "
+              "VRAM at %d,%d\n", (void *)Log, BG_X, BG_Y);
+#ifdef PORT_PSX_BG_SELFTEST
+    BgSelfTest();
+#endif
 }
 
 void ClearGraphSvga(void)
@@ -279,8 +367,37 @@ static void ApplyPalRange(int start, int count)
                                 | ((p[1] >> 3) << 5)
                                 | ((p[2] >> 3) << 10));
 
-    if (video_up)
-        UploadClut();
+    if (!video_up)
+        return;
+
+    UploadClut();
+
+    /*
+     * And put the picture back, because on this machine a palette is not a
+     * palette.
+     *
+     * On DOS the VGA DAC held the palette and applied it on the way out to
+     * the monitor, so a fade was 256 register writes and every pixel already
+     * on screen changed colour. Here the CLUT is applied by the GPU when a
+     * rectangle is blitted, and what lands in the framebuffer is RGB. A fade
+     * changes the tint of everything drawn *after* it and nothing drawn
+     * before -- so the game composes a scene, fades to black, presents it
+     * (black), fades up, and the screen stays black until something happens
+     * to redraw over it. Which is exactly what it looked like: Twinsen
+     * visible because he is a GPU primitive redrawn every frame, the dialogue
+     * box visible because it is presented when it opens, and the whole
+     * background missing.
+     *
+     * So a palette change has to re-present. Single-colour writes do not --
+     * PalOne is used for HUD accents with their own CopyBlockPhys behind
+     * them, and a full 640x480 re-blit per accent would be 16 ms each.
+     *
+     * This was in the port from M1 and nothing had caught it, because every
+     * milestone up to M5 looked at a scene that was composed and presented
+     * once, with the fade before it rather than after.
+     */
+    if (count > 1)
+        PORT_PresentAll();
 }
 
 void Palette(void *pal)
@@ -311,6 +428,246 @@ void PalOne(UBYTE coul, UBYTE r, UBYTE v, UBYTE b)
     dst[1] = Dac6(v);
     dst[2] = Dac6(b);
     ApplyPalRange(coul, 1);
+}
+
+/* ── the clean background ────────────────────────────────────────────────── *
+ *
+ * `Screen` in the engine is the pristine composed background: AffScene saves
+ * it once per full recompose and every erase in the game restores a rectangle
+ * of it into `Log`. M3 dropped it -- 300 KB of a 1575 KB heap -- and aliased
+ * Screen onto Log, on the reasoning that the actors are GPU primitives and
+ * never dirty Log. That was true of the actors and of nothing else: the
+ * shadow, the HUD, the text and every modal are software sprites, and with
+ * Screen == Log the restore was a copy onto itself. Three visible artefacts,
+ * one cause. docs/M6-NOTES.md §5.
+ *
+ * M7 costed the buffer honestly. Reclaiming the HQM pool gives the heap 135 KB
+ * back and merging BufferBrick into it would give maybe 80 more; the buffer
+ * needs 300. It is not there and no rearrangement of main RAM puts it there.
+ *
+ * VRAM has it. The framebuffer is 640x480 16bpp at (0,0), which leaves the
+ * right-hand 384 halfwords of a 1024x512 VRAM unused, and a 640x480 8bpp
+ * image is 320 halfwords by 480 lines -- it fits at x 640 with the upload
+ * tile moved underneath it. So the background lives in VRAM and the two
+ * operations the engine does to it become DMA:
+ *
+ *     CopyScreen(Log, Screen)      -> PORT_BgStore, RAM to VRAM
+ *     CopyBlock(.., Screen, .., Log) -> PORT_BgFetch, VRAM to RAM
+ *
+ * Full screen is one transfer either way: 640 bytes per row is exactly the
+ * 320-halfword width of the region, so Log is already in the layout VRAM
+ * wants. A rectangle is tiled through the same 256x32 staging buffer the
+ * present uses, on 64-pixel column boundaries -- the DMA block rule in
+ * PresentTile applies in both directions.
+ */
+
+/*
+ * Read a rectangle of VRAM back into main RAM, by hand.
+ *
+ * PSn00bSDK 0.24's StoreImage and StoreImage2 both hang here, and the
+ * disassembly says why: they route through the same `_dma_transfer` as the
+ * upload, and it waits on GPUSTAT bit 28, "ready to receive DMA block",
+ * before starting. Bit 28 is the wrong bit for a transfer going the other
+ * way -- the one that says the GPU has pixels waiting is bit 27, "ready to
+ * send VRAM to CPU" -- so on a read the wait never ends. Same shape as the
+ * 16-word block rule in PresentTile: the write path is exercised by
+ * everything and the read path by nothing.
+ *
+ * So the read is done directly: DMA off, GP0(C0h) with the rectangle, wait
+ * for bit 27, pull words out of GPUREAD. A dirty box is a few hundred words
+ * and this is not the expensive part of a frame.
+ */
+static void VramRead(const RECT *r, uint32_t *dst)
+{
+    int words = ((int)r->w * (int)r->h + 1) / 2;
+    int i;
+
+    DrawSync(0);
+
+    GPU_GP1 = 0x04000000;                       /* DMA direction: off        */
+    GPU_GP0 = 0xc0000000;                       /* copy rectangle, VRAM->CPU */
+    GPU_GP0 = ((uint32_t)(uint16_t)r->y << 16) | (uint32_t)(uint16_t)r->x;
+    GPU_GP0 = ((uint32_t)(uint16_t)r->h << 16) | (uint32_t)(uint16_t)r->w;
+
+    while (!(GPU_GP1 & (1 << 27)))
+        ;
+
+    for (i = 0; i < words; i++)
+        dst[i] = GPU_GP0;
+}
+
+static int bg_ready;
+
+void PORT_BgStoreAll(void)
+{
+    RECT r;
+
+    if (!Log || !video_up)
+        return;
+
+    r.x = BG_X;
+    r.y = BG_Y;
+    r.w = BG_HW;
+    r.h = SCR_H;
+    DrawSync(0);
+    LoadImage(&r, (const uint32_t *)Log);
+    DrawSync(0);
+    bg_ready = 1;
+}
+
+void PORT_BgFetchAll(void)
+{
+    RECT r;
+
+    if (!Log || !video_up || !bg_ready)
+        return;
+
+    r.x = BG_X;
+    r.y = BG_Y;
+    r.w = BG_HW;
+    r.h = SCR_H;
+    VramRead(&r, (uint32_t *)Log);
+}
+
+/* Clamp a rectangle to the surface and widen it to whole 64-pixel columns.
+ * 640 is ten of those, so the widened span never leaves the image. */
+static int BgClip(LONG *x0, LONG *y0, LONG *x1, LONG *y1)
+{
+    if (*x0 < 0) *x0 = 0;
+    if (*y0 < 0) *y0 = 0;
+    if (*x1 > SCR_W - 1) *x1 = SCR_W - 1;
+    if (*y1 > SCR_H - 1) *y1 = SCR_H - 1;
+    if (*x1 < *x0 || *y1 < *y0)
+        return 0;
+
+    *x0 &= ~63L;
+    *x1 |= 63L;
+    return 1;
+}
+
+/*
+ * A rectangle of Log into the background.
+ *
+ * The widening to 64-pixel columns copies more of Log than was asked for, and
+ * that is safe for exactly one reason: everywhere this is called from, Log
+ * outside the rectangle already holds the background. AffScene calls it on a
+ * freshly composed frame; OBJECT.C calls it to bake an OBJ_BACKGROUND actor
+ * in; MESSAGE.C calls it on the dialogue band. Nothing calls it with a dirty
+ * Log around the edges of its rectangle.
+ */
+void PORT_BgStore(LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    RECT r;
+    int ty, tx, row;
+
+    if (!Log || !video_up)
+        return;
+    if (!BgClip(&x0, &y0, &x1, &y1))
+        return;
+
+    if (x0 == 0 && x1 == SCR_W - 1 && y0 == 0 && y1 == SCR_H - 1) {
+        PORT_BgStoreAll();
+        return;
+    }
+
+    DrawSync(0);
+
+    for (ty = (int)y0; ty <= (int)y1; ty += TILE_H) {
+        int h = (int)y1 - ty + 1;
+
+        if (h > TILE_H)
+            h = TILE_H;
+
+        for (tx = (int)x0; tx <= (int)x1; tx += TILE_W) {
+            int w = (int)x1 - tx + 1;
+
+            if (w > TILE_W)
+                w = TILE_W;
+
+            for (row = 0; row < h; row++)
+                memcpy(stage + row * w,
+                       Log + (ULONG)(ty + row) * SCR_W + tx, (size_t)w);
+
+            r.x = BG_X + tx / 2;
+            r.y = BG_Y + ty;
+            r.w = (short)(w / 2);
+            r.h = (short)h;
+            LoadImage(&r, (const uint32_t *)stage);
+            DrawSync(0);
+        }
+    }
+
+    bg_ready = 1;
+}
+
+/*
+ * A rectangle of the background into Log.
+ *
+ * Read wide, write narrow: the tile read is on 64-pixel columns because the
+ * DMA says so, but only the columns the caller asked for are copied into Log.
+ * Restoring more than was asked would erase whatever a modal had drawn just
+ * outside its own rectangle, and GAMEMENU.C does exactly that between widgets.
+ */
+void PORT_BgFetch(LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    RECT r;
+    LONG rx0 = x0, ry0 = y0, rx1 = x1, ry1 = y1;
+    int ty, tx, row;
+
+    if (!Log || !video_up || !bg_ready)
+        return;
+    if (!BgClip(&rx0, &ry0, &rx1, &ry1))
+        return;
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > SCR_W - 1) x1 = SCR_W - 1;
+    if (y1 > SCR_H - 1) y1 = SCR_H - 1;
+
+    if (rx0 == 0 && rx1 == SCR_W - 1 && ry0 == 0 && ry1 == SCR_H - 1
+        && x0 == 0 && x1 == SCR_W - 1) {
+        PORT_BgFetchAll();
+        return;
+    }
+
+    DrawSync(0);
+
+    for (ty = (int)ry0; ty <= (int)ry1; ty += TILE_H) {
+        int h = (int)ry1 - ty + 1;
+
+        if (h > TILE_H)
+            h = TILE_H;
+
+        for (tx = (int)rx0; tx <= (int)rx1; tx += TILE_W) {
+            int w = (int)rx1 - tx + 1;
+            int cx0, cx1, cw;
+
+            if (w > TILE_W)
+                w = TILE_W;
+
+            r.x = BG_X + tx / 2;
+            r.y = BG_Y + ty;
+            r.w = (short)(w / 2);
+            r.h = (short)h;
+            VramRead(&r, (uint32_t *)stage);
+
+            /* the part of this tile the caller actually asked for */
+            cx0 = (int)x0 > tx ? (int)x0 : tx;
+            cx1 = (int)x1 < tx + w - 1 ? (int)x1 : tx + w - 1;
+            cw  = cx1 - cx0 + 1;
+            if (cw <= 0)
+                continue;
+
+            for (row = 0; row < h; row++) {
+                int line = ty + row;
+
+                if (line < (int)y0 || line > (int)y1)
+                    continue;
+                memcpy(Log + (ULONG)line * SCR_W + cx0,
+                       stage + row * w + (cx0 - tx), (size_t)cw);
+            }
+        }
+    }
 }
 
 /* ── Log -> VRAM (S_PHYS.ASM) ────────────────────────────────────────────── */
@@ -448,10 +805,40 @@ void Vsync(void)
         VSync(0);
 }
 
+/* The 320x200 crop CopyBlockPhysMCGA just built, 1:1 in the middle of the
+ * field. Scaling it to fill the screen -- which is what a real MCGA mode did
+ * -- is M8, with the FLA player that is the only other thing wanting it. */
+void PORT_PresentMcga(void)
+{
+    int ty, tx;
+
+    if (!Phys || !video_up)
+        return;
+
+    for (ty = 0; ty < 200; ty += TILE_H) {
+        int h = 200 - ty;
+
+        if (h > TILE_H)
+            h = TILE_H;
+
+        for (tx = 0; tx < 320; tx += TILE_W) {
+            int w = 320 - tx;
+
+            if (w > TILE_W)
+                w = TILE_W;
+
+            PresentTile(Phys + ty * 320 + tx, 320,
+                        (SCR_W - 320) / 2 + tx, (SCR_H - 200) / 2 + ty, w, h);
+        }
+    }
+}
+
 void Flip(void)
 {
-    if (mode_x == 320 && Log && Phys)
-        memcpy(Phys, Log, 64000);
+    if (mcga_on && Phys) {
+        PORT_PresentMcga();
+        return;
+    }
 
     PORT_PresentAll();
 }

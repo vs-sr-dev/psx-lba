@@ -95,28 +95,20 @@ void CopyBlockMCGA(LONG x0, LONG y0, LONG x1, LONG y1, UBYTE *src, LONG xd, LONG
 	edx = 320 - eax;
 	ebp = 640 - eax;
 
+	/* PORT: the ASM copied dwords from an address that is Log + line + x0,
+	 * and CopyBlockPhysMCGA hands it an x0 of whatever (x - 160) clamps to --
+	 * odd as often as not. On x86 an unaligned dword load is slow; on MIPS it
+	 * is an AdEL, and it is the first thing a scene with a zoom does. Found on
+	 * cube 59, which enters MCGA from its own life script (GERELIFE.C LM_ZOOM)
+	 * and had only ever been run under the M3 harness, which has no scripts.
+	 *
+	 * memcpy is what the loop was; it just knows about alignment. */
 	while (ebx > 0)
 	{
-		ecx = eax >> 2;
-		while (ecx > 0)
-		{
-			*((ULONG *)edi) = *((ULONG *)esi);
-			esi += 4;
-			edi += 4;
-			ecx--;
-		}
+		memcpy(edi, esi, (size_t)eax);
 
-		ecx = eax & 3;
-		while (ecx > 0)
-		{
-			*edi = *esi;
-			esi++;
-			edi++;
-			ecx--;
-		}
-
-		esi += ebp;
-		edi += edx;
+		esi += eax + ebp;
+		edi += eax + edx;
 		ebx--;
 	}
 }
