@@ -20,7 +20,18 @@ WORD MyKey = 0;
 UBYTE *PtrPal;
 WORD LastFire = 0;
 
+#ifdef PORT_PSX
+/* PORT: on. There is one framebuffer here -- two 640x480 16-bit pages do not
+   fit in a megabyte of VRAM -- so the frame's erase and its redraw happen on
+   the screen the viewer is looking at, and where they land in the raster is
+   the difference between a picture and a flicker. This flag, and the Vsync it
+   guards at the tail of AffScene, put both inside the vertical blanking
+   interval. It costs the wait; it is the only thing that can buy a stable
+   picture on a machine that cannot double-buffer. */
+LONG FlagVsync = 1;
+#else
 LONG FlagVsync = 0;
+#endif
 WORD FlagMCGA = FALSE;
 LONG FlagCredits = FALSE;
 
