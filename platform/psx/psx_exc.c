@@ -24,6 +24,7 @@
 
 extern unsigned long PORT_ExcRegs[37];
 extern unsigned long PORT_ExcBiosVector[4];
+extern unsigned long PORT_ExcEntry[5];   /* cause, sr, epc, badvaddr, count */
 extern void PORT_ExcVectorEntry(void);
 
 #define EXC_SR      31
@@ -109,6 +110,14 @@ void PORT_ExcReport(void)
         PORT_Diag(" %08lx", ((unsigned long *)(epc & ~3UL))[i]);
     PORT_Diag("\n");
 
+#ifdef PSX_EXC_ENTRYLOG
+    PORT_Diag("    at the vector: cause %08lx sr %08lx epc %08lx bad %08lx\n",
+              PORT_ExcEntry[0], PORT_ExcEntry[1],
+              PORT_ExcEntry[2], PORT_ExcEntry[3]);
+    PORT_Diag("    exceptions through the vector so far: %lu\n",
+              PORT_ExcEntry[4]);
+#endif
+
     PORT_HeapReport("exception");
 
     PORT_Diag("*** halted. Look up epc in build/lba1psx.map, or run\n");
@@ -133,6 +142,16 @@ void PORT_ExcVectorDump(const char *when)
               VECTOR[0], VECTOR[1], VECTOR[2], VECTOR[3]);
 }
 
+/* The install sequence is four BIOS interactions with the vector changing
+ * underneath them, and on a retail BIOS one of them is where the port dies.
+ * Naming each step costs nothing and turns "somewhere in install" into a
+ * line. */
+#ifdef PSX_EXC_ENTRYLOG
+#define STEP(what)  PORT_Diag("[EXC] step: %s\n", (what))
+#else
+#define STEP(what)  ((void)0)
+#endif
+
 /*
  * Take the vector over. The BIOS trampoline there is four position-independent
  * instructions, so it is relocated rather than reimplemented — whatever the
@@ -151,15 +170,20 @@ void PORT_ExcInstall(void)
               PORT_ExcBiosVector[2], PORT_ExcBiosVector[3]);
 
     EnterCriticalSection();
+    STEP("critical section entered");
 
     VECTOR[0] = 0x3C1A0000UL | (entry >> 16);           /* lui   $k0, hi   */
     VECTOR[1] = 0x375A0000UL | (entry & 0xffffUL);      /* ori   $k0, lo   */
     VECTOR[2] = 0x03400008UL;                           /* jr    $k0       */
     VECTOR[3] = 0x00000000UL;                           /* nop             */
 
+    STEP("vector written");
+
     FlushCache();
+    STEP("cache flushed");
 
     ExitCriticalSection();
+    STEP("critical section left");
 
     PORT_Diag("[EXC] handler at %08lx, BIOS chain at %p\n",
               entry, (void *)PORT_ExcBiosVector);

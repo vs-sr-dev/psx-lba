@@ -59,6 +59,14 @@ option(PSX_EXC_TRACE "trace the exception handler's own entry path" OFF)
 if(PSX_EXC_TRACE)
     list(APPEND PORT_DEFS -DPSX_EXC_TRACE)
 endif()
+# What the hardware said the moment the vector was entered, and a name for each
+# step of taking the vector over. For the retail-BIOS install path, where the
+# report's own numbers came back inconsistent with the triage that produced
+# them. See docs/M5-NOTES.md.
+option(PSX_EXC_ENTRYLOG "record vector entry state and narrate the install" OFF)
+if(PSX_EXC_ENTRYLOG)
+    list(APPEND PORT_DEFS -DPSX_EXC_ENTRYLOG)
+endif()
 # COMPILE_OPTIONS below is a semicolon-separated list, which is what
 # PORT_DEFS already is.
 set(PORT_DEFS_SEMI "${PORT_DEFS}")
