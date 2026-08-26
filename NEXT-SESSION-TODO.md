@@ -1,125 +1,117 @@
-# psx-lba — handoff, end of session 3 (2026-08-26)
+# psx-lba — handoff, end of session 5 (2026-08-26)
 
 The full study is in [docs/FEASIBILITY.md](docs/FEASIBILITY.md); the milestone
 notes are [M0](docs/M0-NOTES.md), [M1](docs/M1-NOTES.md), [M2](docs/M2-NOTES.md),
-[M3](docs/M3-NOTES.md), [M4](docs/M4-NOTES.md), [M5](docs/M5-NOTES.md). This
-file is only "where to pick it up".
+[M3](docs/M3-NOTES.md), [M4](docs/M4-NOTES.md), [M5](docs/M5-NOTES.md),
+[M6](docs/M6-NOTES.md). This file is only "where to pick it up".
 
 ---
 
 ## Verdict in three lines
 
-**Little Big Adventure runs.** The engine's own `MainLoop`, on a real scene off
-a real disc, at **30 fps locked to the field**, with Twinsen animating, the
-background composed by the 1994 software path and the actor rasterised by the
-GPU. 1535 KB of a 1574 KB heap. It is not playable — no input handling has been
-looked at, one scene, 18.8 s to load it — but it is running.
+**Little Big Adventure is playable.** The pad drives it: Twinsen walks, turns,
+acts, changes behaviour, opens the inventory, talks to the nurse and rides the
+hoverpad, at 30 fps on a real scene off a real disc. One cube, 18.8 s to load
+it, and the shadow leaves a trail — but it is a game now, not a demo.
 
 ## What changed this session
 
-1. **DuckStation, and the emulator's TTY is a file now.** Portable install at
-   `F:\DuckStation`, retail SCPH-1001 BIOS, interpreter, Fast Boot,
-   `LogToFile`. Every measurement below was grepped out of
-   `F:\DuckStation\duckstation.log` instead of read off a terminal. See
-   [M5 §1](docs/M5-NOTES.md).
-2. **The port did not boot on a retail BIOS at all**, and the reason was ours:
-   `mfc0` has a load delay slot on the R3000A and `psx_exc.S` used Cause in the
-   next instruction, so the exception triage tested a dead register. Fixed.
-   **Neither PCSX-Redux mode models that delay** — not the recompiler and not
-   the `-interpreter` M3 switched to. Two emulators now, because they hide
-   different things.
-3. **The exception handler is verified.** M3's open item. Self-test on retail
-   BIOS: AdEL, the right odd address, the right instruction at epc, after 9148
-   exceptions chained through the vector.
-4. **M5: the frame loop**, with the dirty-rectangle discipline driving VRAM.
-5. **`ChangeCube` is 17-19 s, not 3.9.** PCSX-Redux's drive model is optimistic.
-6. **The actor budget was never the problem it looked like.** M4's 94 ms was
-   the harness transforming all 23 objects; the engine's preclip means the game
-   transforms one.
+1. **M6: the pad.** Full mapping, tank controls, analog stick folded into the
+   d-pad bits, disconnect handled. [M6 §1](docs/M6-NOTES.md).
+2. **`-DPSX_M6_AUTOPILOT=ON`** — a scripted controller and a per-step report of
+   what the hero did about it, so the input path is verified by grepping the
+   TTY like everything else in this port. [M6 §2](docs/M6-NOTES.md).
+3. **Input costs nothing.** 34 ms and 29 fps right through the walk; the M5
+   frame is unchanged.
+4. **A found bug, and it is a memory bug wearing a rendering costume.**
+   `Screen` and `Log` have been the same allocation since M3, so `ClsBoxes`
+   restores a box onto itself and nothing the software rasteriser draws is ever
+   erased. Three symptoms: the shadow trail, the behaviour panel burning in,
+   the inventory burning in. [M6 §5](docs/M6-NOTES.md).
+5. **A modal is 3–6 seconds.** Nobody had timed one.
 
 ## Measured numbers (do not re-measure)
 
-Cube 0, DuckStation, retail BIOS, interpreter, software renderer.
+Cube 0, DuckStation, retail BIOS, interpreter, software renderer. M5's table
+still stands; these are new.
 
 | | |
 |---|---|
-| full build (menu) | text 221792 + data 3304 + bss 128214, heap **1574 KB** |
-| at the first scene | **1535 KB**, 19 blocks, largest free block 114 KB |
-| cube 59, the game's heaviest | heap **1535 KB, identical** |
-| HQM used | 141936 (cube 0), 144280 (cube 59), of 400000 |
-| worst brick set in the game | 351894 of BufferBrick's 361472 — **2.6% spare** |
-| `ChangeCube` | **18808 ms** (PCSX-Redux said 3894) |
-| `AffGrille` (640x480 compose) | 461 ms (cube 0), 152 ms (cube 59) |
-| full present | 307200 px, **120 ms** |
-| **a frame** | **34 ms, 29-30 fps, locked to two fields** |
-| of which game logic | 4 ms |
-| of which `AffScene` to present | 28 ms, ~9 of it the vsync wait |
-| of which the actor replay | **0 ms** (one `DrawOTag`) |
-| dirty rectangles per frame | **1**, about **2700 pixels**, **1 ms** |
-| `AffObjetIso`, 136 entities | 18 ms: xform 2, build 5, sort 1, **emit 10** |
-| objects transformed per frame | **1** (the engine preclips) |
+| forward, 150 ticks (`J_UP`) | **+1547** world units, `GEN_ANIM_MARCHE` |
+| backward, 100 ticks | **−1518** — the round trip lands **29 units** from the start |
+| turn left, 60 ticks | beta **+204** of 1024 |
+| turn right, 120 ticks | beta **+512** — half a circle |
+| a frame while walking | **34 ms, 29 fps**, 1 rect, ~3000 px |
+| behaviour panel, worst frame | **5851 ms** |
+| inventory, worst frame | **3276 ms** |
+| minimum L1 hold that changes behaviour | **> 1.4 s** (3.0 s works) |
+| ticks burned inside one `ChangeCube` | close to **1000** — the tick does not pause |
 
-## The two rules that come from experience, not preference
+## The three rules that come from experience, not preference
 
 **Run under DuckStation with a retail BIOS, and under PCSX-Redux
 `-interpreter`.** Neither is sufficient. PCSX-Redux hid a COP0 load delay for
-three milestones; DuckStation found it in one run. PCSX-Redux's CD model is
-four times too fast.
+three milestones; PCSX-Redux's CD model is four times too fast.
 
 **Kill the emulator before building, not after.** mkpsxiso cannot overwrite the
 image while DuckStation holds it open and reports that where nobody is looking.
-One wasted run.
+
+**A harness that can measure the scenery will.** M6's `J_DOWN` step reported
+zero movement twice before anyone noticed Twinsen was reversing into a wall he
+had just walked up to. Reorder the test so the ground under it is known.
 
 ---
 
-# M6 — the game, not one scene
+# M7 — the buffer, the archive, and the memory that pays for both
 
-M5 proved the loop. What it has not touched is everything that makes the loop a
-game: input, scene changes from inside the loop, the scripts driving anything
-other than Twinsen's idle.
+M6 turned the port into a game and the game immediately asked for the 300 KB
+M3 took away. That is the same 300 KB the HQM reclaim frees, so M7's two items
+are one item.
 
 ### Worth doing first, in this order
 
-1. **Input.** `MyJoy`/`MyFire`/`MyKey` are read every frame from `Joy`, `Fire`,
-   `Key`, which `PORT_ScanInput` fills from the pad. Nothing has ever driven
-   the game with it. This is the difference between a demo and a build someone
-   can walk around in, and it is probably small.
-2. **A second actor, and a busier scene.** Every number in this file is one
-   object on camera. Cube 59 (`-DPSX_M3_CUBE=59`) is the stress case and the
-   primitive buffer's 290-triangle limit has never been approached.
-3. **The emit, 10 ms of 18.** `PORT_ActorPoly` clips every polygon with a
+1. **Reclaim HQM, then give `Screen` its own allocation.** HQM is 400000 bytes
+   and the worst scene measured uses 144280; `tools/scene_census.py` bounds
+   every cube offline and the mask term is the only unknown. That takes the
+   margin from 39 KB to near 290, against a 300 KB buffer — the exact figure
+   has to be worked, and it is the whole of the fix for the shadow trail and
+   both burned-in modals. [M6 §5](docs/M6-NOTES.md).
+2. **`ChangeCube`, 18.8 s.** `LoadUsedBrick` does one seek per brick over a
+   3.9 MB archive. The fix is the archive layout, not the streaming policy: the
+   bricks a cube uses want to be contiguous. Walking through a door is the
+   first thing that makes this a player's problem rather than a boot cost.
+3. **The modals, 3–6 seconds.** `DrawMenuComportement` draws four animated
+   bodies and `AffScene(TRUE)` recomposes 640x480 behind it. A behaviour change
+   is a verb an LBA player uses every thirty seconds.
+4. **The emit, 10 ms of 18.** `PORT_ActorPoly` clips every polygon with a
    Sutherland-Hodgman that runs even when the polygon is entirely inside, and
    resolves a palette entry per vertex. A trivial-accept test against the clip
    rectangle and a cached ramp lookup are both obvious and neither has been
    tried.
-4. **Walk into the next room.** `ChangeCube` from inside the loop, with the
-   fade, is the first thing that will exercise scene teardown — and it is 18.8
-   seconds, which is the M7 problem arriving whether or not anyone is ready.
+5. **A busier scene.** Every frame number in this project is one object on
+   camera. Cube 59 (`-DPSX_M3_CUBE=59`) is the stress case and the primitive
+   buffer's 290-triangle limit has never been approached.
 
 ## Carried forward
 
-- **`ChangeCube` is 18.8 seconds.** `LoadUsedBrick` does one seek per brick
-  over a 3.9 MB archive. The fix is the archive layout, not the streaming
-  policy: the bricks a cube uses want to be contiguous. Measurable today,
-  M7 officially.
-- **HQM is 250 KB of dead weight.** 400000 bytes allocated, 144280 used by the
-  worst scene measured. `tools/scene_census.py` bounds every cube offline; the
-  mask term is the only unknown and it is 35-49% of the brick bytes on the two
-  cubes measured. Reclaiming it takes the margin from 39 KB to near 290.
+- **`Screen` must become a real buffer.** See above; it is item 1 because three
+  visible artefacts depend on it.
+- **CD drive contention** between streamed music and loading is untouched.
 - **The 51 ms frames.** 24 ms of work against a 33.3 ms budget; something
   occasionally eats the 9 ms of margin. Unexplained.
 - **Nothing has been run under PCSX-Redux since the `mfc0` fix.**
 - **Twinsen wears the wrong costume** — body 0, the scene-file default, instead
   of the prisoner shirt. Game state, not rendering.
+- **`GetAscii` returns nothing**, so the save-name entry has no characters. It
+  wants the memory card (M8) first.
 - **The FLA movies are not on the disc**, and `-DPSX_SKIP_INTRO=ON` now skips
   looking for them. M8 still has to decide whether the 2023 remaster's
   `Common/Fla` is format-identical.
-- **`InitGraphMcga` reallocates `Log`** and would break the `Screen` alias. Not
-  reached yet; will be in M8.
+- **`InitGraphMcga` reallocates `Log`** and would break the `Screen` alias —
+  which item 1 above may make moot, one way or the other.
 - **`MemoLog` is unused** in the PSX build.
 - **Copper and Bopper are flat, deliberately.** 48 polygons of 19826. Tele
   (~300) wants a 32x32 noise texture. docs/M4-NOTES.md §3.
-- **CD drive contention** between streamed music and loading is untouched. M7.
 
 ---
 
@@ -143,23 +135,27 @@ other than Twinsen's idle.
 
 ## Gotchas found the hard way
 
-Sessions 1 and 2's all still hold (`MSYS_NO_PATHCONV=1` before every
-`docker run`; mkpsxiso takes `name="..."` literally; `CdOpenDir` returns
-`CdlDIR *` and `CdlDIR` is `void *`; address 0 is kernel RAM; engine `.C` files
-need `LANGUAGE C`; `make_cd.py` runs after the build and before mkpsxiso;
-PCSX-Redux's TTY cannot be captured by shell redirection; `0xA0000` is not a VGA
-aperture here; `Log` and `Screen` are one allocation). New:
+Sessions 1–4's all still hold (`MSYS_NO_PATHCONV=1` before every `docker run`;
+mkpsxiso takes `name="..."` literally; `CdOpenDir` returns `CdlDIR *` and
+`CdlDIR` is `void *`; address 0 is kernel RAM; engine `.C` files need
+`LANGUAGE C`; `make_cd.py` runs after the build and before mkpsxiso;
+PCSX-Redux's TTY cannot be captured by shell redirection; `0xA0000` is not a
+VGA aperture here; kill the emulator before rebuilding the ISO; a path
+exercised with one shape is not a working path; `FlagVsync` shipped as 0).
+New:
 
-- **Kill the emulator before rebuilding the ISO.** mkpsxiso fails silently
-  while the image is open.
-- **A path exercised with one shape is not a working path.** The present hung
-  the machine the first time it was asked for a rectangle that was not the
-  whole screen, because a VRAM upload has to be a whole number of 16-word DMA
-  blocks and every previous present had been one by accident. Third time for
-  this class: M2's directory listing worked only at the root, M3's `Malloc`
-  canary only on even sizes.
-- **`FlagVsync` shipped as 0.** On a machine that cannot double-buffer, that is
-  the difference between a picture and a flicker. It is 1 here now.
+- **`Log` and `Screen` being one allocation is not free, it is deferred.** It
+  was recorded as a saving with a justification, the justification covered the
+  actors and only the actors, and the bill arrived four milestones later as
+  three unrelated-looking visual bugs. When a port drops a buffer the engine
+  expects, write down what still reads it.
+- **The 50 Hz tick runs during an 18.8-second scene load.** Anything scheduled
+  on the tick — an autopilot, a timeout, a fade — gets a thousand ticks that
+  the game never sees, because MainLoop is not iterating. Arm on the loop, not
+  on the timer.
+- **`MenuComportement` reads the live `Fire`, not the sampled `MyFire`,** and
+  only after it has drawn four animated bodies. Any modal that spins on a
+  hardware global has a minimum hold, and on this machine it is seconds.
 
 ## Rebuild and run, from the repository root
 
@@ -193,6 +189,7 @@ Build knobs, all in `platform/psx/CMakeLists.txt`:
 | | |
 |---|---|
 | `-DPSX_M5=ON` | the engine's game loop on a fixed cube. Turns M3 off |
+| `-DPSX_M6_AUTOPILOT=ON` | a scripted pad, and a report per step. Needs M5 |
 | `-DPSX_M3=ON` (default) | one static scene instead of the main menu |
 | `-DPSX_M4=ON` (default) | the scene's actors, on the GPU |
 | `-DPSX_M3_CUBE=59` | which scene (0 default; 59 is the heaviest) |
