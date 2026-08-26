@@ -44,6 +44,15 @@ option(PSX_M4 "draw the actors through the GPU after the M3 scene" ON)
 option(PSX_M5 "run the engine's game loop instead of the M3 static scene" OFF)
 
 
+# M6 is the pad, and the pad cannot be pressed from a log file. This replaces
+# it with a scripted sequence -- walk, turn, act, open the behaviour panel --
+# and prints the hero's position and angle at every step boundary, so the input
+# path is verified the same way everything else in this port is: by grepping
+# the TTY. The script runs once and then hands control back to the real
+# controller, so an autopilot build is still playable. Needs PSX_M5.
+#   cmake -DPSX_M5=ON -DPSX_M6_AUTOPILOT=ON ...
+option(PSX_M6_AUTOPILOT "drive the game from a scripted pad, and report" OFF)
+
 # Which scene the harness opens. 0 is Twinsen's house; 59 is the heaviest in
 # the game by brick data (tools/scene_census.py) and is the one to check a
 # memory claim against.
@@ -59,6 +68,12 @@ if(PSX_M4)
     list(APPEND PORT_DEFS -DPORT_PSX_M4)
 endif()
 list(APPEND PORT_DEFS -DPSX_M3_CUBE=${PSX_M3_CUBE})
+if(PSX_M6_AUTOPILOT)
+    if(NOT PSX_M5)
+        message(FATAL_ERROR "PSX_M6_AUTOPILOT needs PSX_M5: it reports from the frame loop")
+    endif()
+    list(APPEND PORT_DEFS -DPORT_PSX_M6_AUTOPILOT)
+endif()
 
 # The bumper screens, their fades and the FLA intro cost about ninety seconds
 # of emulated CD before anything else happens, and none of it is under test.

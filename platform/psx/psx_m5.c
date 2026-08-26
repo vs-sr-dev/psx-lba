@@ -40,6 +40,13 @@ extern WORD DisableAutoSave;
 extern unsigned long PORT_IsoTXform, PORT_IsoTBuild, PORT_IsoTSort, PORT_IsoTDraw;
 extern unsigned long PORT_IsoObjects, PORT_IsoEntities;
 
+#ifdef PORT_PSX_M6_AUTOPILOT
+/* M6's scripted pad, reported once per frame (psx_m6.c). It rides on the M5
+ * loop rather than replacing it: the input is the thing under test, the frame
+ * around it is not. */
+void PORT_M6_Frame(void);
+#endif
+
 #ifndef PSX_M3_CUBE
 #define PSX_M3_CUBE 0
 #endif
@@ -156,6 +163,13 @@ void PORT_M5_Frame(void)
         win_pixels = 0;
         win_rects = 0;
     }
+
+#ifdef PORT_PSX_M6_AUTOPILOT
+    /* Last, and after the frame's own accounting: what it prints is one line
+     * per script step, twenty of them in half a minute, and charging that to
+     * the frame it happened to land in would be noise either way. */
+    PORT_M6_Frame();
+#endif
 }
 
 void PORT_M5_Game(void)
