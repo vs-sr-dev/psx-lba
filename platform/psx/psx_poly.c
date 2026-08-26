@@ -410,13 +410,36 @@ void PORT_ActorEnd(void)
 {
     int i = 0;
 
+    if (prim_used == 0)
+        return;
+
+    /*
+     * One DMA, not one per primitive.
+     *
+     * DrawPrim hands the GPU a single packet and waits for it, and at 137
+     * entities a frame that measured 13 ms of the 50 -- more than the whole
+     * transform. The packets are already contiguous and already in the
+     * engine's back-to-front order, so all they need is the low 24 bits of
+     * each tag pointing at the next one, and the chain IS an ordering table.
+     * DrawOTag then sends the lot in linked-list mode and the CPU is out of
+     * the loop.
+     *
+     * The address is masked to 24 bits because that is the field's width and
+     * because RAM is mirrored at 0x00000000; the top byte stays the packet's
+     * word count, which is where DrawOTag reads it from.
+     */
     while (i < prim_used) {
         int len = (int)((prim_buf[i] >> 24) & 0xff);
+        int next = i + len + 1;
+        unsigned int link = (next < prim_used)
+                          ? ((unsigned int)&prim_buf[next] & 0x00ffffffU)
+                          : 0x00ffffffU;
 
-        DrawPrim((const uint32_t *)&prim_buf[i]);
-        i += len + 1;
+        prim_buf[i] = (prim_buf[i] & 0xff000000U) | link;
+        i = next;
     }
 
+    DrawOTag((const uint32_t *)&prim_buf[0]);
     DrawSync(0);
     prim_used = 0;
 }

@@ -34,6 +34,11 @@ LONG MainLoop(void);
 extern WORD NumCube, NewCube;
 extern WORD DisableAutoSave;
 
+/* AffObjetIso, split four ways (translate/p_ob_iso.c). The frame is 40 ms and
+ * 38 of them are in there; this says which part. */
+extern unsigned long PORT_IsoTXform, PORT_IsoTBuild, PORT_IsoTSort, PORT_IsoTDraw;
+extern unsigned long PORT_IsoObjects, PORT_IsoEntities;
+
 #ifndef PSX_M3_CUBE
 #define PSX_M3_CUBE 0
 #endif
@@ -46,13 +51,35 @@ static unsigned long win_us, win_min, win_max;
 static unsigned long win_present_us, win_pixels;
 static int win_rects;
 
-/* Where a frame stops, when it stops. Only for the first few frames: the TTY
- * is a BIOS putchar per character and an instrument that prints every frame
- * measures itself. */
+/*
+ * The frame, in named pieces.
+ *
+ * The marks are called in a fixed order every frame -- MainLoop's logic, then
+ * AffScene's clean, its present and its actor replay -- so they are recorded
+ * by position and named by the first frame to reach them. Each measures the
+ * interval since the previous mark, which makes the report below the answer
+ * to "where does a frame go".
+ *
+ * This started as a printf at each point, to find where the loop stopped
+ * dead. It is more useful as a clock.
+ */
+#define MARKS 6
+
+static const char *mark_name[MARKS];
+static unsigned long mark_us[MARKS];
+static unsigned long mark_last;
+static int mark_i;
+
 void PORT_M5_Mark(const char *what)
 {
-    if (frame_no < 5)
-        PORT_Diag("[M5]   . %s\n", what);
+    unsigned long now = PORT_Micros();
+
+    if (mark_i < MARKS) {
+        mark_name[mark_i] = what;
+        mark_us[mark_i] += now - mark_last;
+        mark_i++;
+    }
+    mark_last = now;
 }
 
 void PORT_M5_Frame(void)
@@ -81,6 +108,9 @@ void PORT_M5_Frame(void)
     dt = now - last_us;
     last_us = now;
 
+    mark_i = 0;
+    mark_last = now;
+
     win_us += dt;
     if (dt < win_min) win_min = dt;
     if (dt > win_max) win_max = dt;
@@ -97,6 +127,26 @@ void PORT_M5_Frame(void)
                   win_us / n / 1000UL, win_min / 1000UL, win_max / 1000UL,
                   win_us ? (1000000UL * n / win_us) : 0,
                   win_rects / (int)n, win_pixels / n, win_present_us / n / 1000UL);
+
+        PORT_Diag("[M5]        iso: %lu objects %lu entities | xform %lu ms "
+                  "build %lu ms sort %lu ms draw %lu ms\n",
+                  PORT_IsoObjects / n, PORT_IsoEntities / n,
+                  PORT_IsoTXform / n / 1000UL, PORT_IsoTBuild / n / 1000UL,
+                  PORT_IsoTSort / n / 1000UL, PORT_IsoTDraw / n / 1000UL);
+
+        {
+            int m;
+
+            PORT_Diag("[M5]        frame:");
+            for (m = 0; m < MARKS && mark_name[m]; m++) {
+                PORT_Diag(" %s %lu ms |", mark_name[m], mark_us[m] / n / 1000UL);
+                mark_us[m] = 0;
+            }
+            PORT_Diag("\n");
+        }
+
+        PORT_IsoTXform = PORT_IsoTBuild = PORT_IsoTSort = PORT_IsoTDraw = 0;
+        PORT_IsoObjects = PORT_IsoEntities = 0;
 
         win_us = 0;
         win_min = 0xffffffffUL;

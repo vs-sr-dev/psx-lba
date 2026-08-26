@@ -741,6 +741,23 @@ w4:
 	goto nopop;
 }
 
+#ifdef PORT_PSX_M5
+/*
+ * Where AffObjetIso's time goes.
+ *
+ * M5 measures the frame at 40 ms with 38 of them in here, for a single actor
+ * of 129 primitives, and an aggregate that size is not a finding -- it could
+ * be the animation transform, the entity build, the sort or the emit, and
+ * each of those wants a different answer. Four counters, accumulated across
+ * every object in a frame and reported by psx_m5.c. They cost two timer reads
+ * per phase per object, against the one to three objects the preclip lets
+ * through.
+ */
+unsigned long PORT_IsoTXform, PORT_IsoTBuild, PORT_IsoTSort, PORT_IsoTDraw;
+unsigned long PORT_IsoObjects, PORT_IsoEntities;
+unsigned long PORT_Micros(void);
+#endif
+
 /*═════════════════════════════ AffObjetIso ════════════════════════════════*/
 
 PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
@@ -784,6 +801,9 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 	esi += (UWORD)RW(esi + 14) + 16;    /* saute zone info */
 
 	/* rotation nuage/normal face/normal point */
+#ifdef PORT_PSX_M5
+	{ unsigned long t_phase = PORT_Micros();
+#endif
 	if (Infos & INFO_ANIM)
 	{
 		esi = AnimNuage(esi);           /* Objet Animé */
@@ -792,6 +812,11 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 	{
 		esi = RotateNuage(esi);         /* Objet Normal */
 	}
+#ifdef PORT_PSX_M5
+	PORT_IsoTXform += PORT_Micros() - t_phase; }
+	PORT_IsoObjects++;
+	{ unsigned long t_phase = PORT_Micros();
+#endif
 
 	/* ==== finnuage: POLYGONES ============================================ */
 	edi = List_Entity;
@@ -1008,14 +1033,25 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 		PointeurListTri = tri;
 	}
 
+#ifdef PORT_PSX_M5
+	PORT_IsoTBuild += PORT_Micros() - t_phase; }
+	PORT_IsoEntities += (unsigned long)(UWORD)TotalEntite;
+#endif
+
 	/* ==== TRI ============================================================ */
 	{
 		LONG nm1 = (LONG)(UWORD)TotalEntite - 1;
 
+#ifdef PORT_PSX_M5
+		unsigned long t_phase = PORT_Micros();
+#endif
 		if (nm1 > 0)
 		{
 			SergeSort(List_Tri, List_Tri + nm1, nm1);
 		}
+#ifdef PORT_PSX_M5
+		PORT_IsoTSort += PORT_Micros() - t_phase;
+#endif
 	}
 
 	/* ==== DISPLAY ======================================================== */
@@ -1029,6 +1065,9 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 		return 1;
 	}
 
+#ifdef PORT_PSX_M5
+	{ unsigned long t_draw = PORT_Micros();
+#endif
 	Count1 = TotalEntite;
 	tri = List_Tri;
 	do
@@ -1145,5 +1184,8 @@ PORT_FASTCODE LONG AffObjetIso(LONG xwr, LONG ywr, LONG zwr,
 		tri++;
 	} while (--Count1);
 
+#ifdef PORT_PSX_M5
+	PORT_IsoTDraw += PORT_Micros() - t_draw; }
+#endif
 	return 0;                           /* OK affiché au moins 1 entité */
 }
