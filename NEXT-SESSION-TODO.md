@@ -19,7 +19,8 @@ buffer only `AffScene` ever flushed), **the first frame of an animation costs
 107 ms instead of 401**, and **actors are occluded by the scenery**, shadow
 included — the bricks became a textured primitive drawn after the actor,
 through a second palette whose index 0 is a hole. All four confirmed on the
-screen. What is left is time and memory.
+screen, and so are the two in-game menus, which nobody had ever opened. What
+is left is time, memory, and the fact that nothing makes a sound.
 
 ## What changed this session
 
@@ -70,7 +71,7 @@ Cube 0, DuckStation, retail BIOS, interpreter, software renderer.
 | a four-sector read against a one-sector read | about **+20 ms** |
 | heap after the cache | 1540 KB, `use=1465K` before the loop |
 | a frame while walking | 34 ms, 28 fps — unchanged by any of this |
-| the depth pass, VRAM reads included | **1 ms**, 2 overlays a frame |
+| the depth pass, VRAM reads included | **1–2 ms**, 2 overlays a frame |
 | the background after a full present | 4096 of 307200 wrong before `TILE_W`, **0** after |
 | heap after the depth buffers | 1521 KB, `use=1465K` — **56 KB free** |
 | heap in use at the first scene (M7) | 1400 KB of 1574 — **sampled elsewhere, see below** |
@@ -83,7 +84,7 @@ Cube 0, DuckStation, retail BIOS, interpreter, software renderer.
 
 Sessions 1–6's all still hold. New:
 
-**When the self-test comes back clean, believe it.** Four phases said the
+**When the self-test comes back clean, believe it.** Its phases said the
 transfers were right, against two milestones of notes saying the full-screen
 path was the suspect. The value of the clean result was that it made every
 remaining explanation a non-transfer one, and there turned out to be exactly
@@ -127,10 +128,10 @@ under it.** Twice in M8 the prose was right and the code was not.
 3. **The menus draw. Nothing behind them works.** Both in-game menus were
    opened at the end of M8, from the pad, and they render:
 
-   | | | |
-   |---|---|---|
-   | **Start** | `K_ESC` | `QuitMenu` — pause, save, quit (PERSO.C:499) | **works** |
-   | **Select** | `K_F4` | `OptionsMenu` — volume, options (PERSO.C:537) | **works** |
+   | button | key | menu | |
+   |---|---|---|---|
+   | **Start** | `K_ESC` | `QuitMenu` — pause, save, quit (PERSO.C:499) | **draws** |
+   | **Select** | `K_F4` | `OptionsMenu` — volume, options (PERSO.C:537) | **draws** |
 
    That was the part no evidence covered, and it is now covered. What is
    behind them is not:
@@ -209,9 +210,6 @@ under it.** Twice in M8 the prose was right and the code was not.
 - **The holomap has no workspace.** It used to lay 200 KB out inside `Screen`;
   `Screen` is 64 KB now and the holomap refuses instead. See point 1 before
   assuming there is room. [M7 §3](docs/M7-NOTES.md).
-- **The worst frame went from 51 ms to 66.** The average did not move and
-  nothing points at the depth pass, which costs 1 ms. Unexplained, and it is
-  the same shape as the 51 ms that was already unexplained.
 - **`GetAscii` returns nothing** — the pad fills no ascii ring, so the
   save-name entry has no characters. Point 3.
 - **The memory card**, for saves and for `DisableAutoSave` to go away. Point 3
@@ -220,8 +218,10 @@ under it.** Twice in M8 the prose was right and the code was not.
 - **CD drive contention** between streamed music and loading is untouched, and
   point 4 is what will create it: a seek costs 100 ms and the music will want
   the head at the same time a scene load does.
-- **The 51 ms frames.** 24 ms of work against a 33.3 ms budget; something
-  occasionally eats the 9 ms of margin. Unexplained.
+- **The occasional long frame, now 66 ms.** 24 ms of work against a 33.3 ms
+  budget, and something eats the margin every so often — it was 51 ms before
+  M8 and 66 after, with the average unmoved at 34 and nothing pointing at the
+  depth pass, which costs 1–2 ms. Unexplained since M5.
 - **Nothing has been run under PCSX-Redux since the `mfc0` fix.**
 - **Twinsen wears the wrong costume** — body 0, the scene-file default, instead
   of the prisoner shirt. Game state, not rendering.
@@ -332,7 +332,7 @@ Build knobs, all in `platform/psx/CMakeLists.txt`:
 | `-DPSX_M5=ON` | the engine's game loop on a fixed cube. Turns M3 off |
 | `-DPSX_M6_AUTOPILOT=ON` | a scripted pad, and a report per step. Needs M5 |
 | `-DPSX_BG_VRAM=ON` (default) | the clean background in VRAM. OFF is M6's rendering |
-| `-DPSX_BG_SELFTEST=ON` | four round trips through it at boot, before anything else |
+| `-DPSX_BG_SELFTEST=ON` | five round trips through it at boot, before anything else |
 | `-DPSX_HQR_TRACE=ON` | what every resource cache miss cost, split three ways |
 | `-DPSX_MODAL_TRACE=ON` | each presented rectangle, and the clip the primitives after it were emitted under |
 | `-DPSX_DEPTH=ON` (default) | occlude actors with the scenery in front of them. 19 KB |

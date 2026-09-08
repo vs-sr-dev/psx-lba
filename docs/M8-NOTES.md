@@ -279,7 +279,7 @@ rectangle per brick. It is not free but it is not visible either:
 | | |
 |---|---|
 | overlays | **2 a frame** (Twinsen and his shadow), 0 skipped, 0 out of scratch |
-| the whole depth pass, VRAM reads included | **1 ms** |
+| the whole depth pass, VRAM reads included | **1–2 ms** |
 | the frame | **34 ms, 28 fps** -- unchanged |
 | worst frame | 66 ms, against 51 before; unexplained, and the average did not move |
 
