@@ -301,6 +301,8 @@ Confirmed by playing the build, not by reading the log:
 | behaviour panel and inventory | **no burn-in, and their bodies animate** |
 | Twinsen occluded by scenery | **works** |
 | his shadow occluded by scenery | **works**, once the source became VRAM |
+| `DoFoundObj` and `AdelineLogo` | same bracket, same bug, fixed with them |
+| the pause and options menus | **open and draw**, from Start and Select |
 | the first frame of an animation | 107 ms worst, 1.4 ms typical |
 | the frame | 34 ms, 28 fps |
 

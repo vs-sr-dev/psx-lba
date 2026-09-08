@@ -124,31 +124,34 @@ under it.** Twice in M8 the prose was right and the code was not.
    brick over a 3.9 MB archive and a seek is 100 ms. The bricks a cube uses
    want to be contiguous, and so do the animations a body uses. Untouched, and
    now by far the largest number in the port.
-3. **The menus have never been opened.** Two of them are reachable from the
-   pad in today's build and nobody has pressed the button:
+3. **The menus draw. Nothing behind them works.** Both in-game menus were
+   opened at the end of M8, from the pad, and they render:
 
    | | | |
    |---|---|---|
-   | **Start** | `K_ESC` | `QuitMenu` — pause, save, quit (PERSO.C:499) |
-   | **Select** | `K_F4` | `OptionsMenu` — volume, options (PERSO.C:537) |
+   | **Start** | `K_ESC` | `QuitMenu` — pause, save, quit (PERSO.C:499) | **works** |
+   | **Select** | `K_F4` | `OptionsMenu` — volume, options (PERSO.C:537) | **works** |
 
-   Both are `DoGameMenu` over text and boxes, which is software into `Log`
-   and should work now that black is opaque — but "should" is what M8 says
-   about things nobody has looked at. Open them first, before doing anything
-   about them.
+   That was the part no evidence covered, and it is now covered. What is
+   behind them is not:
 
-   Behind them: `VolumeOptions` moves sliders that reach a stubbed mixer;
-   `QuitMenu`'s save path reaches `PSX_fopen(..., "w")`, which correctly
-   refuses because the disc is read-only and there is no memory card;
-   `LoadGame` reaches `ChoosePlayerName` and `GetAscii`, which returns 0
-   forever because nothing fills its ring (psx_sys.c:637). So the menus draw
-   before any of them do anything, and drawing is the part to prove.
+   - **`VolumeOptions`** moves sliders into `MixerChangeVolume`, which is an
+     empty stub. Point 4 has to exist before this means anything.
+   - **`QuitMenu`'s save** reaches `PSX_fopen(..., "w")`, which correctly
+     refuses: the disc is read-only and there is no memory card. This is the
+     memory card's whole reason to be built.
+   - **`LoadGame`** reaches `ChoosePlayerName` and `InputPlayerName`, and
+     `GetAscii` (psx_sys.c:637) returns 0 forever because the pad fills no
+     ascii ring. A name cannot be typed on a joypad anyway: the DOS entry
+     screen wants a virtual keyboard driven by the d-pad, and that is a
+     design decision before it is a port job.
 
    **`MainGameMenu` has never run at all.** PERSO.C:1859 hands off to M3 or
    M5 and only reaches the real menu when both are off, which no build has
    been since M3. It is `Load_HQR(RESS_MENU_PCR)` into `Screen`, a full
    `Flip`, `FadeToPal` and then `DoGameMenu` — every piece of which now
-   exists. Turning both knobs off and seeing what happens is one build.
+   exists, and `DoGameMenu` is the same code the two above just proved.
+   Turning both knobs off is one build.
 
 4. **Nothing makes a sound.** The whole audio stack is `platform/psx/stubs.c`,
    reporting success and staying silent, and its own comments promise
