@@ -114,6 +114,19 @@ Each widget that presents a rectangle now brackets its own emit:
 `DrawComportement` when it presents (`copyblock`), `DrawMenuComportement`
 around the four it draws at once, and `DrawOneInventory`.
 
+Two more screens turned up when the call sites were counted rather than
+guessed at. **`DoFoundObj`** — the "you found an object" screen, which a
+player sees constantly — runs its own frame outside `AffScene`, ClsBoxes to
+FlipBoxes, and draws both the held object and Twinsen's found animation; it
+had the identical bug and now brackets between `ClsBoxes` and after
+`FlipBoxes`. **`AdelineLogo`** does the same with the spinning logo. That
+leaves `HOLOMAP.C`'s three, and the holomap does not run.
+
+The general rule, worth stating because it will catch the next one: **on this
+machine, any code that calls `AffObjetIso` and then presents its own rectangle
+has to bracket itself.** `grep AffObjetIso\|Draw3dObject\|DrawObj3D` outside
+`OBJECT.C` is the whole list.
+
 ### And the clip that mattered here and not on DOS
 
 `DrawObj3D` sets a clip to the cell it is about to present. `Draw3dObject`,

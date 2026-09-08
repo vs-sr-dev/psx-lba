@@ -1100,6 +1100,16 @@ void DoFoundObj(WORD numobj)
 		NbPhysBox = 0;
 		ClsBoxes();
 
+#ifdef PORT_PSX
+		/* PORT: this screen runs its own frame -- ClsBoxes, draw, FlipBoxes
+		 * -- outside AffScene, so it has to bracket its own primitives for
+		 * the same reason the behaviour panel and the inventory do. Both the
+		 * held object and Twinsen's found animation below are GPU primitives
+		 * that go nowhere until PORT_ActorEnd replays them, and DrawOverBrick
+		 * puts a depth overlay in the same chain. */
+		PORT_ActorBegin();
+#endif
+
 		ShadeBox(x0, y0, x1, y1, 4);
 		SetClip(x0, y0, x1, y1);
 
@@ -1144,6 +1154,9 @@ void DoFoundObj(WORD numobj)
 		}
 
 		FlipBoxes();
+#ifdef PORT_PSX
+		PORT_ActorEnd();        /* over the boxes just presented */
+#endif
 
 		if (Fire)
 		{
@@ -3163,16 +3176,29 @@ void GameOver()
 
 		CopyBlock(x0, y0, x1, y1, Screen, x0, y0, Log);
 
+#ifdef PORT_PSX
+		/* PORT: its own frame again, outside AffScene. See DoFoundObj. */
+		PORT_ActorBegin();
+#endif
 		SetFollowCamera(0, 0, 0, 0, -beta, 0, zoom);
 		AffObjetIso(0, 0, 0, 0, 0, 0, ptr3do);
 
 		CopyBlockPhys(x0, y0, x1, y1);
+#ifdef PORT_PSX
+		PORT_ActorEnd();
+#endif
 	}
 	HQ_MixSample(37, 0x1000 + Rnd(2000) - (2000 / 2), 1, 128, 128);
 	CopyBlock(x0, y0, x1, y1, Screen, x0, y0, Log);
+#ifdef PORT_PSX
+	PORT_ActorBegin();
+#endif
 	SetFollowCamera(0, 0, 0, 0, 0, 0, zoom);
 	AffObjetIso(0, 0, 0, 0, 0, 0, ptr3do);
 	CopyBlockPhys(x0, y0, x1, y1);
+#ifdef PORT_PSX
+	PORT_ActorEnd();
+#endif
 
 	chrono = TimerRef + 50 * 3;
 	while ((TimerRef < chrono) AND(Key != K_ESC))

@@ -31,9 +31,11 @@ screen. What is left is time and memory.
    framebuffer kept whatever was underneath. Shadow trail, behaviour panel and
    inventory: one cause, and not the one M7 was looking for.
    [M8 §2](docs/M8-NOTES.md).
-3. **The modals bracket their own primitives.** `PORT_ActorBegin` /
-   `PORT_ActorEnd` had two callers, both in `AffScene`. The panel's four
-   characters were not static — they were never drawn.
+3. **Four screens bracket their own primitives now.** `PORT_ActorBegin` /
+   `PORT_ActorEnd` had two callers, both in `AffScene`. The behaviour panel's
+   four characters were not static — they were never drawn. The inventory,
+   `DoFoundObj` and `AdelineLogo` had the same bug and are fixed with them;
+   the holomap's three call sites are the only ones left, and it does not run.
    [M8 §3](docs/M8-NOTES.md).
 4. **`DrawOneInventory` clips to its cell.** `Draw3dObject` sets no clip, and
    on this machine an overflowing body goes straight to the framebuffer where
@@ -106,7 +108,7 @@ under it.** Twice in M8 the prose was right and the code was not.
 
 ---
 
-# M9 — the heap, the archive layout, and the things with no workspace
+# M9 — the heap, the archive layout, the menus and the silence
 
 ### Worth doing first, in this order
 
@@ -122,17 +124,79 @@ under it.** Twice in M8 the prose was right and the code was not.
    brick over a 3.9 MB archive and a seek is 100 ms. The bricks a cube uses
    want to be contiguous, and so do the animations a body uses. Untouched, and
    now by far the largest number in the port.
-3. **The modals, 3–6 seconds.** They no longer burn in and their bodies now
+3. **The menus have never been opened.** Two of them are reachable from the
+   pad in today's build and nobody has pressed the button:
+
+   | | | |
+   |---|---|---|
+   | **Start** | `K_ESC` | `QuitMenu` — pause, save, quit (PERSO.C:499) |
+   | **Select** | `K_F4` | `OptionsMenu` — volume, options (PERSO.C:537) |
+
+   Both are `DoGameMenu` over text and boxes, which is software into `Log`
+   and should work now that black is opaque — but "should" is what M8 says
+   about things nobody has looked at. Open them first, before doing anything
+   about them.
+
+   Behind them: `VolumeOptions` moves sliders that reach a stubbed mixer;
+   `QuitMenu`'s save path reaches `PSX_fopen(..., "w")`, which correctly
+   refuses because the disc is read-only and there is no memory card;
+   `LoadGame` reaches `ChoosePlayerName` and `GetAscii`, which returns 0
+   forever because nothing fills its ring (psx_sys.c:637). So the menus draw
+   before any of them do anything, and drawing is the part to prove.
+
+   **`MainGameMenu` has never run at all.** PERSO.C:1859 hands off to M3 or
+   M5 and only reaches the real menu when both are off, which no build has
+   been since M3. It is `Load_HQR(RESS_MENU_PCR)` into `Screen`, a full
+   `Flip`, `FadeToPal` and then `DoGameMenu` — every piece of which now
+   exists. Turning both knobs off and seeing what happens is one build.
+
+4. **Nothing makes a sound.** The whole audio stack is `platform/psx/stubs.c`,
+   reporting success and staying silent, and its own comments promise
+   implementations that two milestones came and went without:
+
+   | | |
+   |---|---|
+   | `InitCDR` / `PlayTrackCDR` | returns 0; the engine takes its no-music path |
+   | `PlayMidi` / `VolumeMidi` / `FadeMidi*` | empty |
+   | `WavePlay` / `WaveStop` / `WaveInList` | empty, `Wave_Driver_Enable = 0` |
+   | `MixerChangeVolume` | empty; `MixerGetVolume` lies with 255s |
+
+   The material is on the disc and unused: **SAMPLES.HQR is 2429133 bytes**
+   and `MIDI_MI.HQR` / `MIDI_SB.HQR` are 72870 and 55622 of XMI. The disc has
+   **no CD-DA track** — `build/iso.xml` writes one data track and nothing
+   else — so the DOS release's music tracks 1-9 have nowhere to come from
+   yet.
+
+   Three separate jobs, and they do not depend on each other:
+
+   - **samples, on the SPU.** `stubs.c` already names the plan: SAMPLES.HQR
+     converted to VAG ADPCM at build time, with an LRU pool in the SPU's
+     512 KB, following the DS port's 320 KB one. This is the one that changes
+     how the game feels most per hour spent — footsteps, doors, hits.
+   - **music.** MIDI is not coming back: LIB_MIDI.C's body is commented out
+     in the community release because AIL32 was not open. The plan of record
+     is to pre-render the XMI at build time, as the DS port does, and put it
+     on the disc — either as XA-ADPCM streamed off the data track or as
+     CD-DA tracks that `make_cd.py` and `iso.xml` would have to start
+     emitting.
+   - **the mixer**, which is what `VolumeOptions` in point 3 is moving
+     sliders for. Trivial once the other two exist, and pointless before.
+
+   And the one that is not a job yet: **voices.** VOX is not on the disc and
+   the packed path is refused; `SpeakFromCD` is reached by `DoFoundObj` and
+   the dialogue system today.
+
+5. **The modals, 3–6 seconds.** They no longer burn in and their bodies now
    animate, so what is left is the price: `DrawMenuComportement` draws four
    animated bodies and `AffScene(TRUE)` recomposes 640x480 behind it.
    [M6 §4](docs/M6-NOTES.md).
-4. **The fade is 52 full presents**, about 270 ms. Presenting every second or
+6. **The fade is 52 full presents**, about 270 ms. Presenting every second or
    fourth step would look the same for a quarter of the cost.
    [M7 §5](docs/M7-NOTES.md).
-5. **Cube 59 at 100 ms.** The zoom re-presents 64000 pixels every frame through
+7. **Cube 59 at 100 ms.** The zoom re-presents 64000 pixels every frame through
    the tile path, and the scene carries 192 entities. Two different problems
    sharing one number; separate them before optimising either.
-6. **The emit, 10 ms of 18.** `PORT_ActorPoly` clips every polygon with a
+8. **The emit, 10 ms of 18.** `PORT_ActorPoly` clips every polygon with a
    Sutherland-Hodgman that runs even when the polygon is entirely inside, and
    resolves a palette entry per vertex. A trivial-accept test and a cached ramp
    lookup are both obvious and neither has been tried.
@@ -145,12 +209,14 @@ under it.** Twice in M8 the prose was right and the code was not.
 - **The worst frame went from 51 ms to 66.** The average did not move and
   nothing points at the depth pass, which costs 1 ms. Unexplained, and it is
   the same shape as the 51 ms that was already unexplained.
-- **`GetAscii` returns nothing**, so the save-name entry has no characters. It
-  wants the memory card first.
-- **The memory card**, for saves and for `DisableAutoSave` to go away.
-- **Voices.** VOX is not on the disc and the packed path is refused; they are
-  an SPU job.
-- **CD drive contention** between streamed music and loading is untouched.
+- **`GetAscii` returns nothing** — the pad fills no ascii ring, so the
+  save-name entry has no characters. Point 3.
+- **The memory card**, for saves and for `DisableAutoSave` to go away. Point 3
+  reaches it through `QuitMenu`.
+- **Voices.** VOX is not on the disc and the packed path is refused. Point 4.
+- **CD drive contention** between streamed music and loading is untouched, and
+  point 4 is what will create it: a seek costs 100 ms and the music will want
+  the head at the same time a scene load does.
 - **The 51 ms frames.** 24 ms of work against a 33.3 ms budget; something
   occasionally eats the 9 ms of margin. Unexplained.
 - **Nothing has been run under PCSX-Redux since the `mfc0` fix.**
