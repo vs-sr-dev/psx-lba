@@ -81,6 +81,12 @@ void PORT_BgFetch(long x0, long y0, long x1, long y1);
 void PORT_ActorBegin(void);
 void PORT_ActorEnd(void);
 
+/* The bricks in front of an actor, as a primitive. psx_depth.c. */
+void PORT_DepthBegin(void);
+void PORT_DepthMask(long nummask, long x, long y, void *bankmask);
+void PORT_DepthEnd(void);
+void PORT_DepthStats(int *quads, int *skipped, int *lost, unsigned long *us);
+
 unsigned long PORT_Micros(void);
 
 /* The real answer to Malloc(-1); see psx_sys.c and LIB_SYS/MALLOC.C. */

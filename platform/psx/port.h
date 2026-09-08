@@ -50,6 +50,9 @@ void PORT_BgStoreAll(void);                         /* Log -> background     */
 void PORT_BgFetchAll(void);                         /* background -> Log     */
 void PORT_BgStore(LONG x0, LONG y0, LONG x1, LONG y1);
 void PORT_BgFetch(LONG x0, LONG y0, LONG x1, LONG y1);
+/* the same, into a caller's buffer at its own stride: psx_depth.c */
+void PORT_BgFetchTo(LONG x0, LONG y0, LONG x1, LONG y1,
+                    unsigned char *dst, int stride);
 void PORT_PresentRect(LONG x0, LONG y0, LONG x1, LONG y1);
 /* Rectangles, pixels and microseconds sent to VRAM since the last call, which
  * this resets. The frame loop's bill; see psx_m5.c. */

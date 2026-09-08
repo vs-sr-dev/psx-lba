@@ -112,6 +112,15 @@ option(PSX_MODAL_TRACE "log presented rectangles against emitted ink" OFF)
 if(PSX_MODAL_TRACE)
     list(APPEND PORT_DEFS -DPORT_PSX_MODAL_TRACE)
 endif()
+# Occlude actors with the scenery in front of them. DrawOverBrick's masked
+# copy cannot work here -- the actor is a GPU primitive and not pixels in Log
+# -- so the bricks become a textured primitive drawn after him instead, out of
+# a 16 KB overlay buffer and through a second CLUT whose index 0 is a hole.
+# platform/psx/psx_depth.c, docs/M8-NOTES.md.
+option(PSX_DEPTH "occlude actors with the scenery in front of them" ON)
+if(PSX_DEPTH)
+    list(APPEND PORT_DEFS -DPORT_PSX_DEPTH)
+endif()
 
 if(PSX_EXC_SELFTEST)
     list(APPEND PORT_DEFS -DPSX_EXC_SELFTEST)

@@ -142,6 +142,23 @@ void PORT_M5_Frame(void)
                   PORT_IsoTXform / n / 1000UL, PORT_IsoTBuild / n / 1000UL,
                   PORT_IsoTSort / n / 1000UL, PORT_IsoTDraw / n / 1000UL);
 
+#ifdef PORT_PSX_DEPTH
+        {
+            int quads, skipped, lost;
+            unsigned long us;
+
+            /* The occlusion, per window: how many actors got the bricks in
+             * front of them drawn over them, how many had a screen box too
+             * big for the overlay, and how many the VRAM scratch column had
+             * no room for. The last two are what a wrong-looking frame
+             * means. */
+            PORT_DepthStats(&quads, &skipped, &lost, &us);
+            PORT_Diag("[M5]        depth: %d overlays, %d skipped, %d out of "
+                      "scratch, %lu ms\n", quads, skipped, lost,
+                      us / n / 1000UL);
+        }
+#endif
+
         {
             int m;
 

@@ -620,12 +620,17 @@ void InitBufferCube()
  * used to alias moved to VRAM -- so the copy would read 300 KB past its end.
  *
  * Occluding an actor with scenery on this machine means replaying those
- * bricks as GPU primitives after the actors, with the mask as a texture.
- * That is a real feature and it is M8's. This is where it would go.
+ * bricks as GPU primitives after the actor, with the mask deciding which
+ * texels are holes. That is what platform/psx/psx_depth.c does, and these
+ * three shims are the whole of the engine's side of it: the loops below are
+ * unchanged, and PORT_DepthBegin takes the actor's screen box from the clip
+ * OBJECT.C has already set around the call. docs/M8-NOTES.md.
  */
 static void PORT_CopyMaskBg(LONG nummask, LONG x, LONG y, void *bankmask)
 {
-#ifdef PORT_PSX_BG_VRAM
+#if defined(PORT_PSX_DEPTH)
+	PORT_DepthMask(nummask, x, y, bankmask);
+#elif defined(PORT_PSX_BG_VRAM)
 	(void)nummask;
 	(void)x;
 	(void)y;
@@ -635,6 +640,11 @@ static void PORT_CopyMaskBg(LONG nummask, LONG x, LONG y, void *bankmask)
 #endif
 }
 
+#ifndef PORT_PSX_DEPTH
+#define PORT_DepthBegin()
+#define PORT_DepthEnd()
+#endif
+
 /*--------------------------------------------------------------------------*/
 
 void DrawOverBrick(WORD xm, WORD ym, WORD zm)
@@ -642,6 +652,8 @@ void DrawOverBrick(WORD xm, WORD ym, WORD zm)
 	T_COLONB *ptrlbc;
 	WORD col, i;
 	WORD startcol, endcol;
+
+	PORT_DepthBegin();
 
 	startcol = (ClipXmin + 24) / 24 - 1;
 	endcol = (ClipXmax + 24) / 24;
@@ -667,6 +679,8 @@ void DrawOverBrick(WORD xm, WORD ym, WORD zm)
 			ptrlbc++;
 		}
 	}
+
+	PORT_DepthEnd();
 }
 
 /*--------------------------------------------------------------------------*/
@@ -713,6 +727,8 @@ void DrawOverBrick3(WORD xm, WORD ym, WORD zm)
 	WORD col, i;
 	WORD startcol, endcol;
 
+	PORT_DepthBegin();
+
 	startcol = (ClipXmin + 24) / 24 - 1;
 	endcol = (ClipXmax + 24) / 24;
 
@@ -745,6 +761,8 @@ void DrawOverBrick3(WORD xm, WORD ym, WORD zm)
 			ptrlbc++;
 		}
 	}
+
+	PORT_DepthEnd();
 }
 
 /*--------------------------------------------------------------------------*/

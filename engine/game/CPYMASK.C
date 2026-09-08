@@ -1,6 +1,23 @@
 #include "C_EXTERN.H"
 
-void CopyMask(LONG nummask, LONG x, LONG y, void *bankmask, void *screen)
+/*
+ * The mask copy, with both ends free to be somewhere other than a full frame.
+ *
+ * The walk is unchanged from CopyMask.asm: per line a block count, then
+ * alternating skip and copy runs. What is new is that source and destination
+ * are each a base pointer, a stride and an origin, rather than Screen and Log
+ * at Screen_X.
+ *
+ * The PlayStation port needs both ends moved. The actor it has to cover is a
+ * GPU primitive that is not in Log at all, so the bricks in front of it have
+ * to become a primitive too: they are copied into a small overlay buffer, out
+ * of one brick-sized window on the clean background — which on that machine
+ * lives in VRAM and arrives a rectangle at a time.
+ * platform/psx/psx_depth.c, docs/M8-NOTES.md.
+ */
+void CopyMaskTo(LONG nummask, LONG x, LONG y, void *bankmask,
+				UBYTE *srcbase, LONG srcstride, LONG srcx, LONG srcy,
+				UBYTE *dstbase, LONG dststride, LONG dstx, LONG dsty)
 {
 	UBYTE *pMask;
 	UBYTE *pSrc;
@@ -9,11 +26,9 @@ void CopyMask(LONG nummask, LONG x, LONG y, void *bankmask, void *screen)
 	LONG x1, y1;
 	LONG n;
 	UBYTE NbBlock;
-	ULONG *pTabOffLine = (ULONG *)&TabOffLine;
 	ULONG *pBank = (ULONG *)bankmask;
 
 	pMask = (UBYTE *)bankmask + pBank[nummask];
-	pSrc = (UBYTE *)screen;
 
 	dx = pMask[0];
 	dy = pMask[1];
@@ -63,9 +78,8 @@ void CopyMask(LONG nummask, LONG x, LONG y, void *bankmask, void *screen)
 			NbPix -= x1 - ClipXmax;
 		}
 
-		n = pTabOffLine[y] + x + OffsetBegin;
-		pSrcLine = pSrc + n;
-		pDestLine = Log + n;
+		pSrcLine = srcbase + (y - srcy) * srcstride + (x + OffsetBegin - srcx);
+		pDestLine = dstbase + (y - dsty) * dststride + (x + OffsetBegin - dstx);
 
 		for (dy = y1 - y + 1; dy; dy--)
 		{
@@ -132,16 +146,19 @@ void CopyMask(LONG nummask, LONG x, LONG y, void *bankmask, void *screen)
 			}
 
 			pMask += NbBlock;
-			pDestLine += Screen_X;
-			pSrcLine += Screen_X;
+			pDestLine += dststride;
+			pSrcLine += srcstride;
 		}
 	}
 	else
 	{
-		n = pTabOffLine[y] + x;
-		pDest = Log + n;
-		pSrc += n;
-		dx = Screen_X - dx;
+		LONG dstadv, srcadv;
+
+		pSrc = srcbase + (y - srcy) * srcstride + (x - srcx);
+		pDest = dstbase + (y - dsty) * dststride + (x - dstx);
+
+		dstadv = dststride - dx;
+		srcadv = srcstride - dx;
 
 		for (; dy; dy--)
 		{
@@ -164,8 +181,17 @@ void CopyMask(LONG nummask, LONG x, LONG y, void *bankmask, void *screen)
 				}
 			}
 
-			pDest += dx;
-			pSrc += dx;
+			pDest += dstadv;
+			pSrc += srcadv;
 		}
 	}
+}
+
+/*══════════════════════════════════════════════════════════════════════════*/
+
+void CopyMask(LONG nummask, LONG x, LONG y, void *bankmask, void *screen)
+{
+	CopyMaskTo(nummask, x, y, bankmask,
+			   (UBYTE *)screen, Screen_X, 0, 0,
+			   Log, Screen_X, 0, 0);
 }

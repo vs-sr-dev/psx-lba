@@ -19,6 +19,13 @@ every animation cost 401 ms**, half of it a file read whose result was thrown
 away and the rest a CD seek repeated because the sector cache held one sector.
 It is 107 ms now, and 1.4 ms for most of them.
 
+And with the trail gone, the artefact underneath it was the last one left, so
+M8 also did it: **actors are occluded by the scenery in front of them.** The
+bricks become a textured primitive drawn after the actor, out of the clean
+background, through a second palette whose index 0 is a hole -- which is the
+opposite of what §2 had just made the first one do. Two overlays a frame, one
+millisecond, no change to the frame time.
+
 ---
 
 ## 1. The self-test, extended, and what it ruled out
@@ -29,7 +36,7 @@ that the two paths the engine uses work, because the full-screen pair
 `PORT_BgStoreAll` / `PORT_BgFetchAll` — what `CopyScreen` becomes, and what
 both modals call — had never been exercised by anything.
 
-`-DPSX_BG_SELFTEST=ON` now runs four phases at boot, before a scene loads or a
+`-DPSX_BG_SELFTEST=ON` now runs five phases at boot, before a scene loads or a
 frame is presented:
 
 | phase | result |
@@ -39,6 +46,7 @@ frame is presented:
 | tiled fetch of 100,50..233,81 | 0 of 4288 wrong |
 | …and the four bands around it | 0 wrong — it writes narrow, as documented |
 | tiled store of the same rectangle | 0 wrong inside the widened span, 0 outside |
+| the background after a full present | 0 wrong — **after §5b**; it was 4096 |
 
 So the DMA is right, the widening to 64-pixel columns is right, and `read wide,
 write narrow` does what its comment says. Every transfer-level explanation for
@@ -186,7 +194,91 @@ that number wants checking against M7's `1400 KB in use`, because the two are
 sampled at different moments and nobody should plan the holomap's workspace
 against either until they are measured on one build.
 
-## 6. What is left, from the screen
+## 5b. The present had been writing into the background all along
+
+Found while looking for somewhere to put the depth overlay, and worth its own
+line because nothing had ever asked.
+
+The staging tile starts at VRAM x 640 and the background at 704, which leaves
+the stage 64 halfwords -- 128 texels at 8bpp. `TILE_W` said 256. M7 narrowed
+the region and wrote the consequence into the comment above `STAGE_X` ("five
+tiles per row instead of three", which is 640/128) and left the constant
+alone, so every full-screen present uploaded 128 halfwords from x 640 and put
+64 of them into the background.
+
+A fifth self-test phase -- store a pattern, present a frame, fetch the
+background back -- prices it exactly:
+
+```
+background after a full present -- 4096 of 307200 wrong, first at 0,0    (TILE_W 256)
+background after a full present -- 0 of 307200 wrong                     (TILE_W 128)
+```
+
+4096 is 128x32, which is one staged tile. It was the top-left corner of the
+screen, above the play area, which is why seven milestones of looking at the
+picture never showed it.
+
+## 6. Twinsen stands behind the scenery
+
+`DrawOverBrick` copies the bricks in front of an actor out of the clean
+background, through each brick's mask, back over the actor already rasterised
+into `Log`. Here the actor is a GPU primitive and is not in `Log`, so the
+occlusion has to become a primitive too. `platform/psx/psx_depth.c`:
+
+1. `DrawOverBrick`'s loop is bracketed by `PORT_DepthBegin` / `PORT_DepthEnd`.
+   Begin takes the actor's screen box straight from the engine's clip, which
+   `OBJECT.C` has already set to exactly that box.
+2. Each brick in front of the actor is fetched out of the VRAM background --
+   one brick-sized rectangle, through a new `PORT_BgFetchTo` -- and its masked
+   pixels are written into a 128x128 overlay buffer.
+3. `CopyMask` grew both ends: `CopyMaskTo` takes a base, a stride and an
+   origin for source and destination instead of `Screen` and `Log` at
+   `Screen_X`. `CopyMask` is now a one-line wrapper and the walk is untouched.
+4. Everything the bricks did not cover stays 0, **and 0 is a hole** -- through
+   the second CLUT. §2 made black opaque for the present, which is exactly
+   what an overlay must not have, so there are two palettes: index 0 carries
+   bit 15 in the one the present samples and 0x0000 in the one the overlay
+   does. They are 256 halfwords each and both fit under the framebuffer.
+5. The quad is emitted **into the actor buffer**, at the point in the
+   back-to-front order where `DrawOverBrick` was called -- not after all the
+   actors. An actor standing in front of that brick stays in front of it,
+   because its polygons come later in the same chain.
+
+The overlays live in the scratch column between the framebuffer and the
+background: `PresentTile` uses lines 0..31 of it and nothing else ever has, so
+lines 32..511 are 128 texels by 480 lines, allocated one overlay under the
+next and reset every burst. An overlay never straddles line 256, so one quad
+never needs two texture pages.
+
+### The shadow, and why the source is VRAM and not Log
+
+The first version read the source from `Log`, on the reasoning that `ClsBoxes`
+restored the clean background into the actor's box at the top of the frame.
+That is true of an actor and false of a shadow: `TYPE_SHADOW` draws into `Log`
+*before* calling `DrawOverBrick`, so under a brick the pixels are the shadow
+itself, and copying them changes nothing. On screen that was exactly what
+happened -- Twinsen went behind the scenery on the first try and his shadow
+stayed on top of everything.
+
+Reading the background instead is correct for both and costs one small
+rectangle per brick. It is not free but it is not visible either:
+
+| | |
+|---|---|
+| overlays | **2 a frame** (Twinsen and his shadow), 0 skipped, 0 out of scratch |
+| the whole depth pass, VRAM reads included | **1 ms** |
+| the frame | **34 ms, 28 fps** -- unchanged |
+| worst frame | 66 ms, against 51 before; unexplained, and the average did not move |
+
+### What it cost in memory
+
+The overlay buffer is 16 KB and the per-brick window 4 KB, so the heap ceiling
+falls from 1540 KB to 1521 and `use=1465K` leaves **56 KB free**. Between this
+and the CD cache, M8 spent 50 KB of headroom on two features. That is the
+number M9 has to look at first, and the holomap's workspace is on the other
+side of it.
+
+## 6b. What the screen shows now
 
 Confirmed by playing the build, not by reading the log:
 
@@ -194,38 +286,14 @@ Confirmed by playing the build, not by reading the log:
 |---|---|
 | shadow trail, any direction | **gone** |
 | behaviour panel and inventory | **no burn-in, and their bodies animate** |
-| **Twinsen is not occluded by scenery** | still there, and now the only visible artefact |
+| Twinsen occluded by scenery | **works** |
+| his shadow occluded by scenery | **works**, once the source became VRAM |
 | the first frame of an animation | 107 ms worst, 1.4 ms typical |
+| the frame | 34 ms, 28 fps |
 
-### The depth, and what the CLUT fix changed about it
-
-`DrawOverBrick` redraws the bricks in front of an actor by copying them out of
-the clean background through their own mask. It cannot work here: the actor is
-not in `Log` to be covered up. `GRILLE.C:PORT_CopyMaskBg` is still the hole
-left for it.
-
-What M8 changes is the shape of the answer. The occlusion has to be an overlay
-drawn **after** the actors, and an overlay needs a transparent index — which is
-exactly what §2 just took away, on purpose, for the present. So it wants **two
-CLUTs**: the one the present uses, with entry 0 opaque, and a second one
-identical but with entry 0 back to `0x0000`, for the masked overlay. There is
-room for it beside the first at (0,480), and it costs one more 256-halfword
-upload per palette change.
-
-The rest of the shape:
-
-- the region is small. `DrawOverBrick` runs with the clip set to the actor's
-  screen box, so the overlay is that box — tens of pixels, not a screen;
-- `Log` inside that box already holds the clean background, because `ClsBoxes`
-  restored it there at the top of the frame. So the pixels are in RAM already
-  and only the mask has to be walked;
-- what is needed is a `CopyMask` variant that writes into a scratch buffer
-  cleared to 0 rather than into `Log`, and one textured quad per actor drawn
-  through the second CLUT after `PORT_ActorEnd`;
-- the ordering is the awkward part. `DrawOverBrick` is called per actor inside
-  a back-to-front loop, so a faithful version emits each overlay into
-  `prim_buf` in that order rather than drawing them all at the end — and each
-  needs its own texture staging, in a VRAM that has 128 texels of scratch.
+Nothing visible is outstanding. What is left is time and memory: `ChangeCube`
+at 18.8 s, the modals at 3-6 s, the fade at 270 ms, cube 59 at 100 ms a frame,
+and 56 KB of heap.
 
 ## 7. The rules
 
@@ -248,3 +316,15 @@ pointed at.
 into probe and load said one half was free to delete. Splitting the rest into
 open, index and payload said the cost was in none of the places the code looks
 expensive: not the open, not the decompression, but two sector reads.
+
+**The engine's own comment is sometimes the bug report.** `psx_cd.c` said that
+if the engine ever stopped reading one file at a time the symptom would be
+slow loading. It had. `psx_video.c` said the stage was 128 texels wide and
+five tiles per row; the constant next to it said 256. Twice in one session the
+prose was right and the code was not — so when a comment states a constraint,
+check the line under it.
+
+**Two things cannot share one transparent colour.** The present needs black
+opaque and the depth overlay needs black to be a hole, and the moment §2 fixed
+the first it made the second impossible. A second CLUT is 256 halfwords; the
+half-hour was spent realising it was needed at all.

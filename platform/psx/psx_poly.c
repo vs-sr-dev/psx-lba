@@ -407,6 +407,42 @@ void PORT_ActorSphere(LONG x, LONG y, LONG r, LONG type, LONG coul)
 }
 
 /* ── frame bookkeeping ───────────────────────────────────────────────────── */
+#ifdef PORT_PSX_DEPTH
+void PORT_OverlayReset(void);
+
+/*
+ * A depth overlay, in the middle of the actors rather than after them.
+ *
+ * psx_depth.c has just put the bricks standing in front of one actor into
+ * VRAM; this puts them into the primitive chain at the point the engine asked
+ * for them, which is what keeps an actor standing in FRONT of that brick in
+ * front of it -- its polygons come later in the same chain.
+ *
+ * Index 0 of the overlay's CLUT is 0x0000, so everything the bricks did not
+ * cover is a texel the GPU skips.
+ */
+void PORT_ActorTexQuad(int x, int y, int w, int h,
+                       int tpage, int clut, int u, int v)
+{
+    POLY_FT4 q;
+    DR_TPAGE tp;
+
+    setPolyFT4(&q);
+    setRGB0(&q, 128, 128, 128);         /* 128 passes the texture through */
+    setXY4(&q, x, y, x + w, y, x, y + h, x + w, y + h);
+    setUV4(&q, u, v, u + w - 1, v, u, v + h - 1, u + w - 1, v + h - 1);
+    q.clut  = (unsigned short)clut;
+    q.tpage = (unsigned short)tpage;
+    Emit(&q);
+
+    /* A textured primitive leaves its own page current, semi-transparency
+     * mode included, and the untextured polygons after it take their blend
+     * equation from whatever is current. Put PORT_ActorBegin's back. */
+    setDrawTPage(&tp, 0, 0, 0);
+    Emit(&tp);
+}
+#endif
+
 void PORT_ActorBegin(void)
 {
     DR_TPAGE tp;
@@ -426,6 +462,9 @@ void PORT_ActorBegin(void)
 
     prim_used = 0;
     prim_dropped = 0;
+#ifdef PORT_PSX_DEPTH
+    PORT_OverlayReset();        /* the scratch column is per burst too */
+#endif
     Emit(&tp);
 #ifdef PORT_PSX_MODAL_TRACE
     clip_any = 0;       /* the tpage carries no geometry and no ink */

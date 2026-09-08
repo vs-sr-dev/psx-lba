@@ -53,9 +53,45 @@
 #define CLUT_X      0           /* under the framebuffer                     */
 #define CLUT_Y      480
 
+/*
+ * And the same palette again, with index 0 back to 0x0000.
+ *
+ * The present needs black to be opaque, which is why every entry carries bit
+ * 15 (see ApplyPalRange). The depth overlay needs the opposite: it is a sparse
+ * image of the bricks standing in front of an actor, and everything it does
+ * NOT cover has to be a hole. One palette cannot be both, so there are two --
+ * they cost 256 halfwords each and there is room beside the first.
+ */
+#define CLUT2_X     256
+#define CLUT2_Y     480
+
+/*
+ * The overlay scratch, in the same 64 halfwords the present stages through.
+ *
+ * PresentTile uses lines 0..TILE_H-1 of it and nothing else ever has, so
+ * lines 32..511 are 128 texels by 480 lines of free VRAM -- which is where a
+ * frame's depth overlays go, one under the next, reset every frame. A texture
+ * page is 256 lines tall, so an overlay never straddles line 256: the
+ * allocator skips the gap rather than needing two pages for one quad.
+ */
+#define OVL_Y0      TILE_H
+#define OVL_W       128         /* texels; 64 halfwords is all there is      */
+#define OVL_STRIDE  OVL_W       /* the RAM side is padded to the same width  */
+#define OVL_H       128         /* the tallest actor box that gets one       */
+
 /* Staging is done in bands so the RAM-side gather buffer stays small: on a
- * 2 MB machine a full 256x256 tile would cost 64 KB to save a few DMAs. */
-#define TILE_W      256
+ * 2 MB machine a full 256x256 tile would cost 64 KB to save a few DMAs.
+ *
+ * TILE_W is 128 texels because that is what fits. The stage begins at x 640
+ * and the background at 704, so the stage is 64 halfwords wide, and at 8bpp a
+ * halfword is two texels. M7 narrowed the region and said so in the comment
+ * on STAGE_X -- "five tiles per row instead of three", which is 640/128 --
+ * but left this constant at 256, so every full-screen present uploaded 128
+ * halfwords from x 640 and put 64 of them into the background at 704. The
+ * self-test's fifth phase measures it: with 256 the background came back
+ * `4096 of 307200 wrong, first at 0,0`, which is exactly the 128x32 corner a
+ * staged tile covers. */
+#define TILE_W      128
 #define TILE_H      32
 
 /* ── engine-visible state ────────────────────────────────────────────────── */
@@ -87,6 +123,7 @@ static int mode_x = SCR_W, mode_y = SCR_H;
 static int mcga_on;             /* the zoom, not a screen mode -- see below */
 
 static unsigned short clut[256];
+static unsigned short clut_hole[256];   /* the same, index 0 transparent    */
 /* DMA'd in both directions, so it has to be word aligned: an array of
  * char is not, by anything but luck. */
 static unsigned char  stage[TILE_W * TILE_H] __attribute__((aligned(4)));
@@ -131,10 +168,77 @@ static void EnsureVideo(void)
 
 static void UploadClut(void)
 {
-    RECT r = { CLUT_X, CLUT_Y, 256, 1 };
+    RECT r  = { CLUT_X,  CLUT_Y,  256, 1 };
+    RECT r2 = { CLUT2_X, CLUT2_Y, 256, 1 };
 
     LoadImage(&r, (const uint32_t *)clut);
     DrawSync(0);
+
+    memcpy(clut_hole, clut, sizeof(clut_hole));
+    clut_hole[0] = 0;
+    LoadImage(&r2, (const uint32_t *)clut_hole);
+    DrawSync(0);
+}
+
+/* The CLUT the depth overlay samples through: index 0 is a hole in this one. */
+int PORT_OverlayClut(void)
+{
+    return (int)(unsigned short)getClut(CLUT2_X, CLUT2_Y);
+}
+
+/*
+ * Put an overlay's pixels somewhere in the scratch column and say where.
+ *
+ * `buf` is OVL_STRIDE wide; `h` rows of it starting at row 0 are uploaded.
+ * The whole stride goes up rather than the dirty span, because 64 halfwords
+ * by any height is a whole number of 16-word DMA blocks and a narrower span
+ * would not be -- the same rule PresentTile pads to.
+ *
+ * Returns 0 when the column is full, which is a dropped overlay and not an
+ * error: the frame is one actor short of its occlusion, and PORT_OverlayLost
+ * counts it.
+ */
+static int ovl_row;
+static int ovl_lost;
+
+void PORT_OverlayReset(void)
+{
+    ovl_row  = OVL_Y0;
+    ovl_lost = 0;
+}
+
+int PORT_OverlayLost(void)
+{
+    return ovl_lost;
+}
+
+int PORT_OverlayUpload(const unsigned char *buf, int h, int *tpage, int *v)
+{
+    RECT r;
+
+    if (!video_up || h <= 0)
+        return 0;
+
+    /* never straddle the page boundary at 256 */
+    if (ovl_row < 256 && ovl_row + h > 256)
+        ovl_row = 256;
+    if (ovl_row + h > 512) {
+        ovl_lost++;
+        return 0;
+    }
+
+    r.x = STAGE_X;
+    r.y = (short)ovl_row;
+    r.w = OVL_STRIDE / 2;
+    r.h = (short)h;
+    LoadImage(&r, (const uint32_t *)buf);
+    DrawSync(0);
+
+    *tpage = getTPage(1, 0, STAGE_X, (ovl_row < 256) ? 0 : 256);
+    *v     = ovl_row & 255;
+    ovl_row += h;
+
+    return 1;
 }
 
 /*
@@ -417,6 +521,18 @@ static void BgSelfTest(void)
         PORT_Diag("[BG] selftest: tiled store -- %d wrong inside the widened "
                   "span, %d changed outside it\n", wrong, spill);
     }
+
+    /* -- 5. does presenting a frame leave the background alone? ---------- *
+     * The staging tile and the background are neighbours in VRAM, and the
+     * only thing keeping a present inside its own 64 halfwords is TILE_W.
+     * Nothing has ever checked that. */
+    BgFillPattern();
+    PORT_BgStoreAll();
+    PORT_PresentAll();
+    memset(Log, BG_FILLER, (size_t)SCR_W * SCR_H);
+    PORT_BgFetchAll();
+    BgCheck("background after a full present", 0, 0, SCR_W - 1, SCR_H - 1,
+            BG_WANT_PAT);
 
     memset(Log, 0, (size_t)SCR_W * SCR_H);
     PORT_Diag("[BG] selftest: done\n");
@@ -784,6 +900,75 @@ void PORT_BgStore(LONG x0, LONG y0, LONG x1, LONG y1)
  * Restoring more than was asked would erase whatever a modal had drawn just
  * outside its own rectangle, and GAMEMENU.C does exactly that between widgets.
  */
+/*
+ * A rectangle of the clean background into a buffer that is not Log.
+ *
+ * The same tiling and the same read-wide-write-narrow as PORT_BgFetch below;
+ * what changes is where it lands. psx_depth.c wants one brick's worth of
+ * background at a time, at its own stride, because by the time it asks, Log
+ * may have a shadow drawn on it and the background is what the mask copy has
+ * to read.
+ *
+ * `dst` holds the requested rectangle only: (x0,y0) is its top-left.
+ */
+void PORT_BgFetchTo(LONG x0, LONG y0, LONG x1, LONG y1,
+                    unsigned char *dst, int stride)
+{
+    RECT r;
+    LONG rx0 = x0, ry0 = y0, rx1 = x1, ry1 = y1;
+    int ty, tx, row;
+
+    if (!video_up || !bg_ready || !dst)
+        return;
+    if (!BgClip(&rx0, &ry0, &rx1, &ry1))
+        return;
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > SCR_W - 1) x1 = SCR_W - 1;
+    if (y1 > SCR_H - 1) y1 = SCR_H - 1;
+    if (x1 < x0 || y1 < y0)
+        return;
+
+    DrawSync(0);
+
+    for (ty = (int)ry0; ty <= (int)ry1; ty += TILE_H) {
+        int h = (int)ry1 - ty + 1;
+
+        if (h > TILE_H)
+            h = TILE_H;
+
+        for (tx = (int)rx0; tx <= (int)rx1; tx += TILE_W) {
+            int w = (int)rx1 - tx + 1;
+            int cx0, cx1, cw;
+
+            if (w > TILE_W)
+                w = TILE_W;
+
+            r.x = (short)(BG_X + tx / 2);
+            r.y = (short)(BG_Y + ty);
+            r.w = (short)(w / 2);
+            r.h = (short)h;
+            VramRead(&r, (uint32_t *)stage);
+
+            cx0 = (int)x0 > tx ? (int)x0 : tx;
+            cx1 = (int)x1 < tx + w - 1 ? (int)x1 : tx + w - 1;
+            cw  = cx1 - cx0 + 1;
+            if (cw <= 0)
+                continue;
+
+            for (row = 0; row < h; row++) {
+                int line = ty + row;
+
+                if (line < (int)y0 || line > (int)y1)
+                    continue;
+                memcpy(dst + (line - y0) * stride + (cx0 - x0),
+                       stage + row * w + (cx0 - tx), (size_t)cw);
+            }
+        }
+    }
+}
+
 void PORT_BgFetch(LONG x0, LONG y0, LONG x1, LONG y1)
 {
     RECT r;

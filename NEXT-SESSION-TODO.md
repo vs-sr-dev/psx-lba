@@ -10,20 +10,20 @@ file is only "where to pick it up".
 
 ## Verdict in four lines
 
-**The trail and the burn-in are gone, and they were never the background.** The
-port built its CLUT without bit 15, so a colour that quantised to black became
-`0x0000`, and a textured primitive does not draw `0x0000` — the present has
-been skipping every black pixel since M1. One line. Confirmed on the screen,
-in both directions and in both modals. **The modals also draw their bodies
-now**: they were emitting GPU primitives into a buffer only `AffScene` ever
-flushed. And **the first frame of an animation costs 107 ms instead of 401**,
-because half of that was a file read whose result was discarded and the rest
-was a sector cache that held one sector. What is left on screen is the depth:
-Twinsen is not occluded by scenery, and it is now the only visible artefact.
+**Nothing visible is outstanding.** The trail and the burn-in were never the
+background: the port built its CLUT without bit 15, so a colour that quantised
+to black became `0x0000`, and a textured primitive does not draw `0x0000` —
+the present has been skipping every black pixel since M1. One line. **The
+modals draw their bodies now** (they were emitting GPU primitives into a
+buffer only `AffScene` ever flushed), **the first frame of an animation costs
+107 ms instead of 401**, and **actors are occluded by the scenery**, shadow
+included — the bricks became a textured primitive drawn after the actor,
+through a second palette whose index 0 is a hole. All four confirmed on the
+screen. What is left is time and memory.
 
 ## What changed this session
 
-1. **The self-test proved the transfers and cleared them.** Four phases at
+1. **The self-test proved the transfers and cleared them.** Five phases at
    boot: full-screen round trip **0 of 307200 wrong**, tiled fetch and store of
    a deliberately unaligned rectangle 0 wrong inside and 0 outside. Every
    transfer-level explanation died in one run. [M8 §1](docs/M8-NOTES.md).
@@ -44,6 +44,15 @@ Twinsen is not occluded by scenery, and it is now the only visible artefact.
 6. **The CD sector cache is eight windows of two sectors**, 32 KB, LRU. It held
    one sector, so an HQR miss re-read the archive's index every time.
    [M8 §4](docs/M8-NOTES.md).
+7. **`TILE_W` was 256 and the stage only has room for 128.** Every full-screen
+   present had been writing 64 halfwords into the background's top-left
+   corner. The self-test's fifth phase prices it: `4096 of 307200 wrong`
+   before, 0 after. [M8 §5b](docs/M8-NOTES.md).
+8. **Actors are occluded by scenery** — `platform/psx/psx_depth.c`, a second
+   CLUT with index 0 transparent, and `CopyMask` generalised at both ends. Two
+   overlays a frame, 1 ms, frame time unchanged. The source is the VRAM
+   background and not `Log`, because a shadow is already drawn into `Log` by
+   the time it asks. [M8 §6](docs/M8-NOTES.md).
 
 ## Measured numbers (do not re-measure)
 
@@ -58,7 +67,10 @@ Cube 0, DuckStation, retail BIOS, interpreter, software renderer.
 | a sector that has to be sought to | about **100 ms** |
 | a four-sector read against a one-sector read | about **+20 ms** |
 | heap after the cache | 1540 KB, `use=1465K` before the loop |
-| a frame while walking | 34 ms, 29 fps — unchanged by any of this |
+| a frame while walking | 34 ms, 28 fps — unchanged by any of this |
+| the depth pass, VRAM reads included | **1 ms**, 2 overlays a frame |
+| the background after a full present | 4096 of 307200 wrong before `TILE_W`, **0** after |
+| heap after the depth buffers | 1521 KB, `use=1465K` — **56 KB free** |
 | heap in use at the first scene (M7) | 1400 KB of 1574 — **sampled elsewhere, see below** |
 | HQM peak, cube 0 / cube 59 | 92940 / 96628 of 262144 |
 | ClsBoxes out of the VRAM background | 1 ms |
@@ -86,43 +98,41 @@ payload put the cost in none of the places the code looks expensive.
 
 **A path exercised hundreds of times can still have an unexercised shape.** The
 present ran for seven milestones and was never once asked to write a black
-pixel over a different one.
+pixel over a different one — and it had been writing into the background's
+corner the whole time, above the play area where nobody looks.
+
+**A comment that states a constraint is worth checking against the constant
+under it.** Twice in M8 the prose was right and the code was not.
 
 ---
 
-# M9 — the depth, the archive layout, and the things with no workspace
+# M9 — the heap, the archive layout, and the things with no workspace
 
 ### Worth doing first, in this order
 
-1. **Actors are not occluded by scenery.** The last visible artefact, and M8
-   changed the shape of the answer: the overlay needs a transparent index and
-   §2 deliberately took that away from the present, so it wants a **second
-   CLUT** with entry 0 back to `0x0000`. The region is small — `DrawOverBrick`
-   runs with the clip set to the actor's screen box — and `Log` inside that box
-   already holds the clean background, so only the mask has to be walked. What
-   is needed: a `CopyMask` variant writing into a scratch buffer cleared to 0,
-   and one textured quad per actor after the actors. The ordering is the
-   awkward part. [M8 §6](docs/M8-NOTES.md), `GRILLE.C:PORT_CopyMaskBg`.
+1. **The heap, before anything else.** M8 spent 50 KB of headroom on two
+   features — 32 KB of CD cache and 19 KB of depth buffers — and the build now
+   reports 1521 KB with `use=1465K`, so **56 KB free**. M7's `1400 KB in use`
+   was sampled at a different moment, so the first job is one build that
+   measures both at the same point. Nothing else on this list should be
+   planned until that number is real, and the holomap's workspace is on the
+   other side of it. [M8 §5, §6](docs/M8-NOTES.md).
 2. **`ChangeCube`, 18.8 s**, and the 107 ms that is left on an animation, are
    the same problem: **the archive layout**. `LoadUsedBrick` does one seek per
    brick over a 3.9 MB archive and a seek is 100 ms. The bricks a cube uses
    want to be contiguous, and so do the animations a body uses. Untouched, and
    now by far the largest number in the port.
-3. **Re-measure the heap on one build.** M7's `1400 KB in use` and M8's
-   `use=1465K` are sampled at different moments and the cache took 31 KB off
-   the ceiling. Nothing should be planned against either — the holomap least of
-   all — until they are taken from the same run. [M8 §5](docs/M8-NOTES.md).
-4. **The modals, 3–6 seconds.** They no longer burn in and their bodies now
+3. **The modals, 3–6 seconds.** They no longer burn in and their bodies now
    animate, so what is left is the price: `DrawMenuComportement` draws four
    animated bodies and `AffScene(TRUE)` recomposes 640x480 behind it.
    [M6 §4](docs/M6-NOTES.md).
-5. **The fade is 52 full presents**, about 270 ms. Presenting every second or
+4. **The fade is 52 full presents**, about 270 ms. Presenting every second or
    fourth step would look the same for a quarter of the cost.
    [M7 §5](docs/M7-NOTES.md).
-6. **Cube 59 at 100 ms.** The zoom re-presents 64000 pixels every frame through
+5. **Cube 59 at 100 ms.** The zoom re-presents 64000 pixels every frame through
    the tile path, and the scene carries 192 entities. Two different problems
    sharing one number; separate them before optimising either.
-7. **The emit, 10 ms of 18.** `PORT_ActorPoly` clips every polygon with a
+6. **The emit, 10 ms of 18.** `PORT_ActorPoly` clips every polygon with a
    Sutherland-Hodgman that runs even when the polygon is entirely inside, and
    resolves a palette entry per vertex. A trivial-accept test and a cached ramp
    lookup are both obvious and neither has been tried.
@@ -130,8 +140,11 @@ pixel over a different one.
 ## Carried forward
 
 - **The holomap has no workspace.** It used to lay 200 KB out inside `Screen`;
-  `Screen` is 64 KB now and the holomap refuses instead. See point 3 before
+  `Screen` is 64 KB now and the holomap refuses instead. See point 1 before
   assuming there is room. [M7 §3](docs/M7-NOTES.md).
+- **The worst frame went from 51 ms to 66.** The average did not move and
+  nothing points at the depth pass, which costs 1 ms. Unexplained, and it is
+  the same shape as the 51 ms that was already unexplained.
 - **`GetAscii` returns nothing**, so the save-name entry has no characters. It
   wants the memory card first.
 - **The memory card**, for saves and for `DisableAutoSave` to go away.
@@ -202,6 +215,13 @@ a screen mode; `Screen` is two things wearing one name). New:
   whole cost of that loop, and the answer is the archive layout.
 - **The engine reads more than one file at a time.** The one-sector cache's own
   comment predicted the symptom would be slow loading. It was.
+- **A comment that states a constraint is worth checking against the constant
+  under it.** Twice in M8 the prose was right and the code was not: the CD
+  cache, and `TILE_W` against the width `STAGE_X`'s comment claims.
+- **`Log` is the clean background inside an actor's box, and is not inside a
+  shadow's.** `ClsBoxes` restores it at the top of the frame, but TYPE_SHADOW
+  draws into `Log` before calling `DrawOverBrick`. Anything that needs the
+  clean pixels mid-frame has to read VRAM.
 
 ## Rebuild and run, from the repository root
 
@@ -246,6 +266,7 @@ Build knobs, all in `platform/psx/CMakeLists.txt`:
 | `-DPSX_BG_SELFTEST=ON` | four round trips through it at boot, before anything else |
 | `-DPSX_HQR_TRACE=ON` | what every resource cache miss cost, split three ways |
 | `-DPSX_MODAL_TRACE=ON` | each presented rectangle, and the clip the primitives after it were emitted under |
+| `-DPSX_DEPTH=ON` (default) | occlude actors with the scenery in front of them. 19 KB |
 | `-DPSX_HQM_MEMORY=<bytes>` | the scene pool, 262144 by default |
 | `-DPSX_M3=ON` (default) | one static scene instead of the main menu |
 | `-DPSX_M4=ON` (default) | the scene's actors, on the GPU |
