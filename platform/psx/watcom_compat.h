@@ -73,6 +73,16 @@ void PORT_BgFetchAll(void);
 void PORT_BgStore(long x0, long y0, long x1, long y1);
 void PORT_BgFetch(long x0, long y0, long x1, long y1);
 
+/* A frame's actor primitives are collected between these two and replayed
+ * after the present that would otherwise erase them (psx_poly.c). AffScene
+ * brackets a whole frame; the modals in GAMEMENU.C have to bracket each
+ * widget they draw a 3D body into, because a modal presents its own
+ * rectangles and never goes near AffScene. */
+void PORT_ActorBegin(void);
+void PORT_ActorEnd(void);
+
+unsigned long PORT_Micros(void);
+
 /* The real answer to Malloc(-1); see psx_sys.c and LIB_SYS/MALLOC.C. */
 unsigned long PORT_HeapLargestFree(void);
 

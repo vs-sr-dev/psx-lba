@@ -369,6 +369,15 @@ void *HQR_Get(T_HQR_HEADER *header, WORD index)
 	ULONG size;
 	ULONG offset;
 
+#ifdef PORT_PSX_HQR_TRACE
+	/* PORT: a miss here is an OpenRead, two Seeks and a Close against a CD,
+	 * in the middle of whatever frame asked for the resource -- and the
+	 * first frame of every animation is one. Time the three steps apart, so
+	 * that what is left after the probe went away is attributed and not
+	 * guessed at. */
+	unsigned long t0 = 0, t_open = 0, t_index = 0;
+#endif
+
 	// ressources
 	FILE *handle;
 	UWORD nbbloc;
@@ -395,13 +404,26 @@ void *HQR_Get(T_HQR_HEADER *header, WORD index)
 	else // need load
 	{
 		//		SaveTimer() ;
-		size = Size_HQR(header->Name, index);
+#ifdef PORT_PSX_HQR_TRACE
+		t0 = PORT_Micros();
+#endif
+
+		/* PORT: `size = Size_HQR(header->Name, index)` stood here. It opened
+		 * the archive, walked it to this entry's LZSS header and returned a
+		 * size that the twenty lines below then read again and overwrote --
+		 * a whole CD open, two seeks and a close for a number nobody used.
+		 * On a disc that is not free: a miss on Anim.hqr measured 401 ms,
+		 * of which the probe was 200. The first frame of every animation is
+		 * a miss, and that is the stutter. docs/M8-NOTES.md. */
 
 		// load and expand hqr bloc
 
 		handle = OpenRead(header->Name);
 		if (!handle)
 			return 0;
+#ifdef PORT_PSX_HQR_TRACE
+		t_open = PORT_Micros();
+#endif
 
 		Read(handle, &buffer, 4);
 		nbbloc = (UWORD)(buffer / 4);
@@ -426,6 +448,9 @@ void *HQR_Get(T_HQR_HEADER *header, WORD index)
 
 		// taille decompacte
 		size = lzssheader.SizeFile;
+#ifdef PORT_PSX_HQR_TRACE
+		t_index = PORT_Micros();
+#endif
 
 		if (!size)
 		{
@@ -515,6 +540,17 @@ void *HQR_Get(T_HQR_HEADER *header, WORD index)
 		header->FreeSize -= size;
 
 		//		RestoreTimer() ;
+
+#ifdef PORT_PSX_HQR_TRACE
+		{
+			unsigned long now = PORT_Micros();
+
+			PORT_Diag("[HQR] miss %s[%d] %lu bytes -- open %lu us, index %lu "
+					  "us, payload %lu us, total %lu us\n", header->Name,
+					  (int)index, size, t_open - t0, t_index - t_open,
+					  now - t_index, now - t0);
+		}
+#endif
 
 		return HQR_Sane(header, ptr, index, "fresh load");
 	}

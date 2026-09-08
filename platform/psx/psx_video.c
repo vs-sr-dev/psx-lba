@@ -226,21 +226,105 @@ void SimpleInitSvga(void)
 static void VramRead(const RECT *r, uint32_t *dst);
 
 /*
- * Does a rectangle written into the background come back?
+ * Does the background come back?
  *
- * The write half works -- a full 640x480 upload lands and the frame after it
- * presents normally. The read half is VramRead below, which had to be
- * written by hand. This runs the round trip at boot with nothing else
- * happening: no present queued, no scene load, no palette upload since the
- * one InitSvga did. Whatever it says separates "VRAM reads do not work here"
- * from "VRAM reads do not work while the frame is doing something else".
+ * M7 asked that of a 32x4 rectangle and got `0 of 256 bytes wrong`, which was
+ * enough to say VRAM reads work at all. It was not enough to say the paths
+ * the engine actually uses work: the tiled fetch is exercised by every frame
+ * and the full-screen pair only by the two modals, which burn in. So this now
+ * runs four phases at boot, with nothing else happening -- no present queued,
+ * no scene loaded, no palette upload since InitSvga's:
+ *
+ *   1. the M7 probe, unchanged, as the known-good baseline;
+ *   2. a full-screen store and fetch of a known pattern -- 307200 bytes
+ *      through one LoadImage and one VramRead, which is what CopyScreen
+ *      becomes and what has never been proved;
+ *   3. a tiled fetch of a rectangle that is deliberately NOT on a 64-pixel
+ *      column, to check that "read wide, write narrow" puts the right columns
+ *      in the right place and leaves the rest of Log alone;
+ *   4. a tiled store of the same rectangle, to check the widening writes the
+ *      64-pixel span it says it does and nothing outside it.
+ *
+ * Phase 3 is the shadow trail's first suspect and phase 2 is the modals'.
  */
+
+/* The byte the pattern puts at this offset of Log. It has to differ along a
+ * row, down a column and between 64-pixel columns, so that a transfer landing
+ * one column or one line out reads as a mismatch rather than as a match. */
+static unsigned char BgPat(unsigned long off)
+{
+    return (unsigned char)((off * 5u) ^ (off >> 7) ^ 0x5a);
+}
+
+static void BgFillPattern(void)
+{
+    unsigned long i;
+
+    for (i = 0; i < (unsigned long)SCR_W * SCR_H; i++)
+        Log[i] = BgPat(i);
+}
+
+/*
+ * Count the pixels in a rectangle of Log that are not what they should be.
+ *
+ * `want` is BG_WANT_PAT for the pixels a transfer should have brought back,
+ * and BG_FILLER for the pixels it should have left alone -- one comparator
+ * for both questions, because "did it write outside the rectangle" is as much
+ * of an answer as "did it write inside it".
+ */
+#define BG_FILLER   0xaa
+#define BG_WANT_PAT 0x100       /* not a byte: means "whatever BgPat says" */
+
+static int BgCheck(const char *what, int x0, int y0, int x1, int y1, int want)
+{
+    int x, y, bad = 0, total = 0;
+    unsigned long firstoff = 0;
+    unsigned char firstgot = 0, firstwant = 0;
+
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            unsigned long off = (unsigned long)y * SCR_W + (unsigned long)x;
+            unsigned char w = (want == BG_WANT_PAT)
+                            ? BgPat(off) : (unsigned char)want;
+
+            total++;
+            if (Log[off] != w) {
+                if (!bad) {
+                    firstoff  = off;
+                    firstgot  = Log[off];
+                    firstwant = w;
+                }
+                bad++;
+            }
+        }
+    }
+
+    if (bad)
+        PORT_Diag("[BG] selftest: %s -- %d of %d wrong, first at %d,%d "
+                  "(off %lu) got %02x want %02x\n", what, bad, total,
+                  (int)(firstoff % SCR_W), (int)(firstoff / SCR_W),
+                  firstoff, firstgot, firstwant);
+    else
+        PORT_Diag("[BG] selftest: %s -- 0 of %d wrong\n", what, total);
+
+    return bad;
+}
+
+/* Not on a 64-pixel column at either end, and not on a 32-line tile boundary
+ * either: 100..233 sits inside the widened columns 64..255, and 50..81
+ * straddles the tile row that starts at 64. */
+#define PROBE_X0    100
+#define PROBE_Y0    50
+#define PROBE_X1    233
+#define PROBE_Y1    81
+
 static void BgSelfTest(void)
 {
     static unsigned char probe[256] __attribute__((aligned(4)));
     RECT r;
     int i, bad = 0;
 
+    /* -- 1. the M7 probe, unchanged ------------------------------------ */
     for (i = 0; i < 256; i++)
         probe[i] = (unsigned char)i;
 
@@ -269,6 +353,73 @@ static void BgSelfTest(void)
 
     PORT_Diag("[BG] selftest: %d of 256 bytes wrong (first four %02x %02x "
               "%02x %02x)\n", bad, probe[0], probe[1], probe[2], probe[3]);
+
+    if (!Log) {
+        PORT_Diag("[BG] selftest: no Log, stopping after the probe\n");
+        return;
+    }
+
+    /* -- 2. full screen, both ways: what the modals use ----------------- */
+    BgFillPattern();
+    PORT_BgStoreAll();
+    memset(Log, BG_FILLER, (size_t)SCR_W * SCR_H);
+    PORT_BgFetchAll();
+    BgCheck("full-screen round trip", 0, 0, SCR_W - 1, SCR_H - 1,
+            BG_WANT_PAT);
+
+    /* -- 3. tiled fetch of an unaligned rectangle ----------------------- */
+    memset(Log, BG_FILLER, (size_t)SCR_W * SCR_H);
+    PORT_BgFetch(PROBE_X0, PROBE_Y0, PROBE_X1, PROBE_Y1);
+    BgCheck("tiled fetch, inside", PROBE_X0, PROBE_Y0, PROBE_X1, PROBE_Y1,
+            BG_WANT_PAT);
+    /* the widened span it read but must not have written */
+    BgCheck("tiled fetch, left of it", 64, PROBE_Y0, PROBE_X0 - 1,
+            PROBE_Y1, BG_FILLER);
+    BgCheck("tiled fetch, right of it", PROBE_X1 + 1, PROBE_Y0, 255,
+            PROBE_Y1, BG_FILLER);
+    BgCheck("tiled fetch, the line above", PROBE_X0, PROBE_Y0 - 1,
+            PROBE_X1, PROBE_Y0 - 1, BG_FILLER);
+    BgCheck("tiled fetch, the line below", PROBE_X0, PROBE_Y1 + 1,
+            PROBE_X1, PROBE_Y1 + 1, BG_FILLER);
+
+    /* -- 4. tiled store of the same rectangle --------------------------- *
+     * The background holds the pattern. Put its complement in Log, store the
+     * unaligned rectangle, and read the whole background back: the complement
+     * must cover the widened span 64..255 on lines 50..81 -- that is the
+     * documented widening -- and nothing outside it. */
+    {
+        unsigned long o;
+        int x, y, wrong = 0, spill = 0;
+
+        for (o = 0; o < (unsigned long)SCR_W * SCR_H; o++)
+            Log[o] = (unsigned char)~BgPat(o);
+
+        PORT_BgStore(PROBE_X0, PROBE_Y0, PROBE_X1, PROBE_Y1);
+        memset(Log, BG_FILLER, (size_t)SCR_W * SCR_H);
+        PORT_BgFetchAll();
+
+        for (y = 0; y < SCR_H; y++) {
+            for (x = 0; x < SCR_W; x++) {
+                unsigned long off = (unsigned long)y * SCR_W + x;
+                int inspan = (y >= PROBE_Y0 && y <= PROBE_Y1
+                              && x >= 64 && x <= 255);
+                unsigned char want = inspan ? (unsigned char)~BgPat(off)
+                                            : BgPat(off);
+
+                if (Log[off] != want) {
+                    if (inspan)
+                        wrong++;
+                    else
+                        spill++;
+                }
+            }
+        }
+        PORT_Diag("[BG] selftest: tiled store -- %d wrong inside the widened "
+                  "span, %d changed outside it\n", wrong, spill);
+    }
+
+    memset(Log, 0, (size_t)SCR_W * SCR_H);
+    PORT_Diag("[BG] selftest: done\n");
 }
 #endif
 
@@ -362,10 +513,35 @@ static void ApplyPalRange(int start, int count)
     const UBYTE *p = PORT_PalRGB + start * 3;
     int i;
 
-    for (i = start; i < start + count; i++, p += 3)
-        clut[i] = (unsigned short)((p[0] >> 3)
-                                | ((p[1] >> 3) << 5)
-                                | ((p[2] >> 3) << 10));
+    for (i = start; i < start + count; i++, p += 3) {
+        unsigned short c = (unsigned short)((p[0] >> 3)
+                                         | ((p[1] >> 3) << 5)
+                                         | ((p[2] >> 3) << 10));
+
+        /*
+         * Black is not nothing.
+         *
+         * A textured primitive skips any texel whose CLUT entry is exactly
+         * 0x0000 -- that is how the GPU does sprite transparency, and it is
+         * not optional. The present is a textured quad, so every pixel of
+         * Log that the palette maps to black was being LEFT ALONE in the
+         * framebuffer rather than drawn: the picture underneath it survived.
+         *
+         * That is the trail. Not the background restore, which M8's
+         * self-test proves round-trips 307200 bytes without an error, and
+         * not the dirty-box list, which was right all along: Log was
+         * correct, the box was presented, and the black half of it simply
+         * never arrived. It shows up wherever the new frame is darker than
+         * the old one -- behind a walking shadow, and inside a modal, whose
+         * widgets are Box(..., 0) on black.
+         *
+         * Bit 15 makes it opaque black instead. On an untextured or
+         * non-blended primitive the bit is only the mask bit written into
+         * VRAM, which nothing here reads, so the one entry it changes is
+         * the one that was wrong.
+         */
+        clut[i] = c ? c : 0x8000;
+    }
 
     if (!video_up)
         return;
@@ -845,6 +1021,9 @@ void Flip(void)
 
 void CopyBlockPhys(LONG x0, LONG y0, LONG x1, LONG y1)
 {
+#ifdef PORT_PSX_MODAL_TRACE
+    PORT_Diag("[PRES] %ld,%ld..%ld,%ld\n", x0, y0, x1, y1);
+#endif
     PresentRect(x0, y0, x1, y1);
 }
 

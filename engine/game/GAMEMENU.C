@@ -335,6 +335,21 @@ void DrawComportement(WORD comportement, WORD beta, WORD copyblock)
 	x1 = x0 + 99;
 	y1 = y0 + 119;
 
+#ifdef PORT_PSX
+	/* PORT: the body drawn below is not pixels in Log -- it is a GPU
+	 * primitive, collected and replayed after the present that would
+	 * otherwise erase it (psx_poly.c). AffScene brackets a whole frame with
+	 * this pair; a modal draws and presents its own rectangles and never goes
+	 * near AffScene, so it has to bracket each one itself. Without it the
+	 * four characters were emitted into a buffer nothing ever flushed: they
+	 * did not fail to animate, they were never drawn at all.
+	 *
+	 * copyblock FALSE means the caller is DrawMenuComportement, which
+	 * collects all four and flushes them after its own present. */
+	if (copyblock)
+		PORT_ActorBegin();
+#endif
+
 	ptranim = HQR_Get(HQR_Anims, TabAnim[comportement]);
 	frameanim = FrameAnim[comportement];
 
@@ -405,6 +420,9 @@ void DrawComportement(WORD comportement, WORD beta, WORD copyblock)
 	{
 		CopyBlockPhys(x0, y0, x1, y1);
 		CopyBlockPhys(CTRL_X0 + 10, CTRL_Y0 + 139, CTRL_X1 - 10, CTRL_Y0 + 139 + 40);
+#ifdef PORT_PSX
+		PORT_ActorEnd(); /* over the boxes just presented, not under them */
+#endif
 	}
 
 	RestoreClip();
@@ -500,6 +518,10 @@ void DrawInfoMenu(WORD x0, WORD y0)
 
 void DrawMenuComportement(WORD beta)
 {
+#ifdef PORT_PSX
+	PORT_ActorBegin(); /* the four bodies below; flushed after the present */
+#endif
+
 	DrawCadre(CTRL_X0, CTRL_Y0, CTRL_X1, CTRL_Y1);
 
 	ShadeBox(CTRL_X0 + 1, CTRL_Y0 + 1, CTRL_X1 - 1, CTRL_Y1 - 1, 2);
@@ -527,6 +549,9 @@ void DrawMenuComportement(WORD beta)
 	DrawInfoMenu(CTRL_X0, CTRL_Y1 + 10);
 
 	CopyBlockPhys(CTRL_X0, CTRL_Y0, CTRL_X1, CTRL_Y1);
+#ifdef PORT_PSX
+	PORT_ActorEnd();
+#endif
 }
 
 /*══════════════════════════════════════════════════════════════════════════*/
@@ -656,6 +681,10 @@ void DrawOneInventory(WORD flagnum)
 	WORD x, y, x0, y0, x1, y1;
 	WORD *ptrobj;
 
+#ifdef PORT_PSX
+	PORT_ActorBegin(); /* same as DrawComportement: emit, present, replay */
+#endif
+
 	x = INV_START_X + 10 + SIZE_INV_OBJ_X / 2 + (SIZE_INV_OBJ_X + 10) * (flagnum / 4);
 	y = INV_START_Y + 10 + SIZE_INV_OBJ_Y / 2 + (SIZE_INV_OBJ_Y + 10) * (flagnum & 3);
 
@@ -684,8 +713,21 @@ void DrawOneInventory(WORD flagnum)
 			PatchObjet(ptrobj);
 		}
 
+#ifdef PORT_PSX
+		/* PORT: unlike DrawObj3D, Draw3dObject sets no clip -- on DOS an
+		 * object that overflowed its cell went into Log and was simply never
+		 * blitted, because the widget presents only the cell. Here the body
+		 * is a GPU primitive that goes straight into the framebuffer, so the
+		 * overflow is on screen and nothing ever presents over it again.
+		 * Clip it to what this widget presents. */
+		MemoClip();
+		SetClip(x0, y0, x1, y1);
+#endif
 		Draw3dObject(x, y, ptrobj,
 					 ListBetaGame[flagnum] += 8, 15000);
+#ifdef PORT_PSX
+		RestoreClip();
+#endif
 
 		if (flagnum == 15) // carburant
 		{
@@ -697,6 +739,9 @@ void DrawOneInventory(WORD flagnum)
 	DrawCadre(x0, y0, x1, y1);
 
 	CopyBlockPhys(x0, y0, x1, y1);
+#ifdef PORT_PSX
+	PORT_ActorEnd();
+#endif
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/

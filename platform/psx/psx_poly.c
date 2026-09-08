@@ -79,6 +79,20 @@ static unsigned int prim_buf[PRIM_WORDS];
 static int prim_used;
 static int prim_dropped;
 
+#ifdef PORT_PSX_MODAL_TRACE
+/*
+ * The union of the clip rectangles the frame's primitives were emitted under.
+ *
+ * Every primitive here is clipped against ClipXmin..ClipYmax before it is
+ * emitted, so this is an upper bound on where the burst can put ink -- and
+ * comparing it with the rectangle the caller then presents is the whole
+ * question a modal trail asks. A widget that emits under a wider clip than it
+ * presents leaves ink nothing will ever present over again, because on this
+ * machine a primitive goes into the framebuffer and not into Log.
+ */
+static int clip_x0, clip_y0, clip_x1, clip_y1, clip_any;
+#endif
+
 /* One primitive, deferred. The word count lives in the top byte of the tag,
  * which is where DrawPrim reads it from too. */
 static void Emit(const void *pri)
@@ -93,6 +107,19 @@ static void Emit(const void *pri)
 
     memcpy(&prim_buf[prim_used], p, (size_t)(len + 1) * 4);
     prim_used += len + 1;
+
+#ifdef PORT_PSX_MODAL_TRACE
+    if (!clip_any) {
+        clip_x0 = ClipXmin; clip_y0 = ClipYmin;
+        clip_x1 = ClipXmax; clip_y1 = ClipYmax;
+        clip_any = 1;
+    } else {
+        if (ClipXmin < clip_x0) clip_x0 = ClipXmin;
+        if (ClipYmin < clip_y0) clip_y0 = ClipYmin;
+        if (ClipXmax > clip_x1) clip_x1 = ClipXmax;
+        if (ClipYmax > clip_y1) clip_y1 = ClipYmax;
+    }
+#endif
 }
 
 /* Fill types, after P_OB_ISO's translation (translate/s_fillv.c's table):
@@ -400,6 +427,9 @@ void PORT_ActorBegin(void)
     prim_used = 0;
     prim_dropped = 0;
     Emit(&tp);
+#ifdef PORT_PSX_MODAL_TRACE
+    clip_any = 0;       /* the tpage carries no geometry and no ink */
+#endif
 }
 
 /*
@@ -442,6 +472,12 @@ void PORT_ActorEnd(void)
     DrawOTag((const uint32_t *)&prim_buf[0]);
     DrawSync(0);
     prim_used = 0;
+#ifdef PORT_PSX_MODAL_TRACE
+    if (clip_any)
+        PORT_Diag("[INK] burst under clip %d,%d..%d,%d\n",
+                  clip_x0, clip_y0, clip_x1, clip_y1);
+    clip_any = 0;
+#endif
 }
 
 /* Primitives that did not fit the frame's buffer. Zero everywhere so far. */

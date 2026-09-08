@@ -98,6 +98,20 @@ option(PSX_BG_SELFTEST "prove the VRAM background round-trips, at boot" OFF)
 if(PSX_BG_SELFTEST)
     list(APPEND PORT_DEFS -DPORT_PSX_BG_SELFTEST)
 endif()
+# What a resource cache miss costs, and which of its two file walks costs it.
+# The first frame of an animation is a miss, and a miss is a CD seek inside a
+# frame -- so this is the stutter's measurement rather than a guess at it.
+option(PSX_HQR_TRACE "time every HQR cache miss" OFF)
+if(PSX_HQR_TRACE)
+    list(APPEND PORT_DEFS -DPORT_PSX_HQR_TRACE)
+endif()
+# Every rectangle presented, and the clip the burst of primitives after it was
+# emitted under. A modal that emits wider than it presents leaves ink nothing
+# will present over again -- which is what a trail inside a modal is.
+option(PSX_MODAL_TRACE "log presented rectangles against emitted ink" OFF)
+if(PSX_MODAL_TRACE)
+    list(APPEND PORT_DEFS -DPORT_PSX_MODAL_TRACE)
+endif()
 
 if(PSX_EXC_SELFTEST)
     list(APPEND PORT_DEFS -DPSX_EXC_SELFTEST)

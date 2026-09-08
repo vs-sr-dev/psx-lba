@@ -47,11 +47,39 @@ struct PSX_FILE {
 
 static PSX_FILE files[MAX_FILES];
 
-/* One shared sector cache. Per-file caches would cost 2 KB each and the engine
- * reads one archive at a time; if that ever stops being true, the symptom is
- * slow loading, not wrong data. */
-static unsigned long cache_buf[SECTOR / 4];
-static int cache_lba = -1;
+/*
+ * A shared sector cache: four windows of four consecutive sectors, LRU.
+ *
+ * It held ONE sector until M8, with a note saying that if the engine ever
+ * stopped reading one thing at a time the symptom would be slow loading. It
+ * does not read one thing at a time, and the loading was slow.
+ *
+ * Two things were wrong and both were measured on an HQR miss, which is what
+ * the first frame of every animation costs:
+ *
+ *   one sector was not enough. A miss reads the archive's offset table --
+ *   sector 0 -- and then the entry, tens of thousands of sectors away. The
+ *   second read evicted the first, so every miss paid for sector 0 again.
+ *   A sector that has to be sought to costs about 100 ms here, so that was
+ *   200 ms of a 201 ms miss, against 0.06 ms actually reading the 40 to 1400
+ *   bytes wanted. Eight independent ways took it to 101.
+ *
+ *   one sector at a time was not enough either. The 100 ms is the drive
+ *   command and the seek, not the transfer: the sectors after it are nearly
+ *   free. HQR entries for consecutive indices are consecutive in the archive
+ *   and an animation is about a kilobyte, so a four-sector window holds
+ *   roughly the next eight animations the game will ask for.
+ *
+ * Windows are aligned to four sectors so that a lookup is one comparison and
+ * the same sector is never held twice.
+ */
+#define CACHE_WIN       2       /* sectors per window, and their alignment  */
+#define CACHE_WINDOWS   8       /* 32 KB, all told                          */
+
+static unsigned long cache_buf[CACHE_WINDOWS][CACHE_WIN * (SECTOR / 4)];
+static int  cache_base[CACHE_WINDOWS] = {-1, -1, -1, -1, -1, -1, -1, -1};
+static unsigned long cache_used[CACHE_WINDOWS]; /* for the LRU              */
+static unsigned long cache_clock;
 
 static int cd_up;
 
@@ -105,9 +133,12 @@ static void normalise(char *dst, size_t n, const char *src)
 }
 
 static int read_sectors(int lba, void *dst, int count);
+static const unsigned char *cache_sector(int lba);
 
 void PORT_CdInit(void)
 {
+    int i;
+
     if (cd_up)
         return;
 
@@ -116,21 +147,22 @@ void PORT_CdInit(void)
         return;
     }
     cd_up = 1;
-    cache_lba = -1;
+    for (i = 0; i < CACHE_WINDOWS; i++)
+        cache_base[i] = -1;
     PORT_Diag("[FS] CD ready\n");
 
     /* Sector 16 is the ISO9660 primary volume descriptor and its bytes 1..5
      * are the literal "CD001". Reading it directly separates two failures that
      * look identical from the outside: a drive that cannot read, and a file
      * system layer that cannot parse. */
-    if (read_sectors(16, cache_buf, 1)) {
-        const unsigned char *pvd = (const unsigned char *)cache_buf;
+    {
+        const unsigned char *pvd = cache_sector(16);
 
-        PORT_Diag("[FS] PVD type=%d id=%c%c%c%c%c\n",
-                  pvd[0], pvd[1], pvd[2], pvd[3], pvd[4], pvd[5]);
-        cache_lba = 16;
-    } else {
-        PORT_Diag("[FS] cannot read sector 16 — the drive is not reading\n");
+        if (pvd)
+            PORT_Diag("[FS] PVD type=%d id=%c%c%c%c%c\n",
+                      pvd[0], pvd[1], pvd[2], pvd[3], pvd[4], pvd[5]);
+        else
+            PORT_Diag("[FS] cannot read sector 16 — the drive is not reading\n");
     }
 
     /* List the root once at boot. It costs one directory read, and it answers
@@ -171,18 +203,56 @@ static int read_sectors(int lba, void *dst, int count)
     return 1;
 }
 
-static int cache_sector(int lba)
+/* The sector, from the cache or from the drive. Null if the drive refused. */
+static const unsigned char *cache_sector(int lba)
 {
-    if (cache_lba == lba)
-        return 1;
-    if (!read_sectors(lba, cache_buf, 1)) {
+    int base = lba & ~(CACHE_WIN - 1);
+    int i, victim = 0;
+
+    for (i = 0; i < CACHE_WINDOWS; i++)
+        if (cache_base[i] == base) {
+            cache_used[i] = ++cache_clock;
+            return (const unsigned char *)cache_buf[i]
+                 + (lba - base) * SECTOR;
+        }
+
+    /* an empty window if there is one, the oldest otherwise */
+    for (i = 0; i < CACHE_WINDOWS; i++)
+        if (cache_base[i] < 0) {
+            victim = i;
+            break;
+        } else if (cache_used[i] < cache_used[victim]) {
+            victim = i;
+        }
+
+    /* The read-ahead is what makes this worth having, but a window that runs
+     * off the end of the disc would fail as a whole and lose the sector that
+     * was actually asked for, so fall back to the one sector on any error. */
+    if (read_sectors(base, cache_buf[victim], CACHE_WIN)) {
+        cache_base[victim] = base;
+    } else if (read_sectors(lba, cache_buf[victim], 1)) {
+        cache_base[victim] = lba;
+        base = lba;
+    } else {
         PORT_Diag("[FS] read error at sector %d\n", lba);
-        cache_lba = -1;
+        cache_base[victim] = -1;
         return 0;
     }
-    cache_lba = lba;
+    cache_used[victim] = ++cache_clock;
 
-    return 1;
+    return (const unsigned char *)cache_buf[victim] + (lba - base) * SECTOR;
+}
+
+/* Whole sectors have just gone to the caller behind the cache's back. */
+static void cache_drop(int lba, int count)
+{
+    int i;
+
+    for (i = 0; i < CACHE_WINDOWS; i++)
+        if (cache_base[i] >= 0
+            && cache_base[i] + CACHE_WIN > lba
+            && cache_base[i] < lba + count)
+            cache_base[i] = -1;
 }
 
 /* ── the stdio surface ───────────────────────────────────────────────────── */
@@ -277,21 +347,20 @@ size_t PSX_fread(void *p, size_t sz, size_t n, PSX_FILE *f)
                 break;
             /* The shared cache may now be stale for these sectors; it is not
              * wrong, but it is no longer the one we just bypassed. */
-            if (cache_lba >= sector && cache_lba < sector + count)
-                cache_lba = -1;
+            cache_drop(sector, count);
 
             done += (long)count * SECTOR;
             dst += (long)count * SECTOR;
             f->pos += (long)count * SECTOR;
         } else {
             long chunk = SECTOR - offset;
+            const unsigned char *src;
 
             if (chunk > left)
                 chunk = left;
-            if (!cache_sector(sector))
+            if (!(src = cache_sector(sector)))
                 break;
-            memcpy(dst, (const unsigned char *)cache_buf + offset,
-                   (size_t)chunk);
+            memcpy(dst, src + offset, (size_t)chunk);
             done += chunk;
             dst += chunk;
             f->pos += chunk;
